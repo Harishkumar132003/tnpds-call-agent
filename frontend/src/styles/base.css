@@ -1,0 +1,3764 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.mono,
+code {
+  font-family: var(--mono);
+  font-size: 0.94em;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ===== Floating shell ===================================================== */
+
+.shell {
+  display: grid;
+  /* The grid reserves only the collapsed width. The rail itself overlays the
+     page when it opens, so hovering never reflows what you are reading --
+     pushing the content sideways on hover is the thing that makes these
+     sidebars feel broken. */
+  grid-template-columns: var(--rail-collapsed) minmax(0, 1fr);
+  background: var(--shell);
+  /* border-radius: var(--r-shell);
+  box-shadow: var(--shadow-shell);
+  margin: var(--s5); */
+  /* Exactly the viewport, so the rail and each page's topbar stay put and the
+     page body is what scrolls. A chat needs a bounded height to scroll its
+     transcript without taking the composer with it. */
+  height: 100vh;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    /* The column template is deliberately NOT collapsed here. The rail stays
+       position:fixed at every width, so .content still needs its second
+       column to sit beside it -- dropping to one column put the content in
+       column 1, underneath the rail, and clipped the first 70px of every page
+       below this breakpoint. */
+    margin: 0;
+    border-radius: 0;
+  }
+}
+
+/* ===== Sidebar ============================================================ */
+
+.rail {
+  /* Out of the grid flow, so widening it overlays the page instead of
+     resizing it. Fixed rather than absolute because .shell is exactly the
+     viewport and starts at its top-left corner. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 40;
+  width: var(--rail-collapsed);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--rule);
+  background: var(--shell);
+  padding: var(--s4) var(--s3);
+  gap: var(--s2);
+  /* Labels are simply clipped at the collapsed width rather than hidden one by
+     one, which is why no element in the rail needs to know it is collapsed. */
+  overflow: hidden;
+  transition:
+    width 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
+}
+
+.rail:hover,
+/* Keyboard users never hover, so focus opens it too -- otherwise tabbing into
+   the nav lands on labels clipped off the edge.
+   :has(:focus-visible), not :focus-within. A mouse click also focuses the link
+   it hits, and :focus-within cannot tell the two apart -- so clicking a nav
+   item and moving away left the rail stuck open. :focus-visible is set for
+   keyboard focus and not for a plain click, which is exactly the distinction
+   wanted here. */
+.rail:has(:focus-visible) {
+  width: var(--rail-width);
+  box-shadow: var(--shadow-shell);
+  overflow-y: auto;
+}
+
+/* Everything that is only meaningful once there is room for words. Faded
+   rather than removed, so the rail's height never jumps as it opens. */
+.rail .nav__group,
+.rail .nav__label,
+.rail .nav__tag,
+.rail .ws__text,
+.rail .ws__chev,
+.rail .who__text {
+  opacity: 0;
+  transition: opacity 0.14s var(--ease);
+}
+
+.rail:hover .nav__group,
+.rail:hover .nav__label,
+.rail:hover .nav__tag,
+.rail:hover .ws__text,
+.rail:hover .ws__chev,
+.rail:hover .who__text,
+.rail:has(:focus-visible) .nav__group,
+.rail:has(:focus-visible) .nav__label,
+.rail:has(:focus-visible) .nav__tag,
+.rail:has(:focus-visible) .ws__text,
+.rail:has(:focus-visible) .ws__chev,
+.rail:has(:focus-visible) .who__text {
+  opacity: 1;
+}
+
+/* A nav row must not wrap while it is narrow, or the rail grows tall and the
+   icons stop lining up with each other. */
+.rail .nav__item,
+.rail .ws,
+.rail .who {
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail,
+  .rail .nav__group,
+  .rail .nav__label,
+  .rail .nav__tag,
+  .rail .ws__text,
+  .rail .ws__chev,
+  .rail .who__text {
+    transition: none;
+  }
+}
+
+/* --- Workspace switcher --- */
+
+.ws {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  text-align: left;
+  transition: background 0.12s var(--ease);
+}
+
+.ws:hover {
+  background: var(--surface-hover);
+}
+
+.ws__glyph {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  background: var(--violet);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.ws__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.ws__name {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws__sub {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws__chev {
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.ws__menu {
+  margin-top: var(--s1);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.ws__item {
+  width: 100%;
+  display: block;
+  padding: var(--s2) var(--s3);
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.ws__item:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+.ws__item--all {
+  border-top: 1px solid var(--rule);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* --- Nav --- */
+
+.nav {
+  flex: 1;
+  overflow-y: auto;
+  /* Explicit, not inherited. `overflow-y: auto` alone leaves overflow-x at
+     `auto` too, and the labels are far wider than the collapsed rail -- so the
+     browser drew a horizontal scrollbar across the bottom of the nav. Clipping
+     is what the collapsed state wants anyway. */
+  overflow-x: hidden;
+  margin-top: var(--s3);
+}
+
+.nav__group {
+  /* "MAIN MENU" wraps to two lines at the collapsed width, which pushes every
+     row below it down and snaps back on expand -- the vertical jump. */
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  padding: var(--s4) var(--s2) var(--s2);
+}
+
+.nav__group:first-child {
+  padding-top: 0;
+}
+
+.nav__item {
+  /* Anchors the accent bar below, which is positioned against this row. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 7px var(--s2) 7px calc(var(--s2) + 7px);
+  border-radius: var(--r-sm);
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-size: var(--text-base);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+/* An accent bar that slides out from the rail's edge.
+ *
+ * A pseudo-element rather than markup: every nav row gets it for free and the
+ * rail's JSX stays a plain list of links. It is parked fully off to the left
+ * and slides in, so the motion reads as coming from the edge of the screen
+ * rather than growing in place. Rounded only on the right, which is what makes
+ * it look attached to the edge rather than floating beside it. */
+.nav__item::before {
+  content: '';
+  position: absolute;
+  /* At the row's own edge, not the rail's. The rail sets overflow-y, which
+     makes the browser clip horizontally too, so anything placed out in its
+     padding is invisible -- which is exactly how the first attempt failed. */
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 60%;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--violet);
+  transform: translate(-100%, -50%);
+  opacity: 0;
+  transition:
+    transform 0.18s var(--ease),
+    opacity 0.18s var(--ease),
+    height 0.18s var(--ease);
+}
+
+.nav__item:hover::before {
+  transform: translate(0, -50%);
+  opacity: 1;
+}
+
+.nav__item:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+.nav__item.is-active {
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* The current page keeps its bar out, taller and at full strength, so hovering
+   elsewhere never leaves it ambiguous which page you are actually on. */
+.nav__item.is-active::before {
+  transform: translate(0, -50%);
+  opacity: 1;
+  height: 80%;
+}
+
+/* Reduced motion still gets the bar, just without the travel: the indicator is
+   information, the slide is decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .nav__item::before {
+    transition: opacity 0.18s var(--ease);
+    transform: translate(0, -50%);
+  }
+}
+
+.nav__item.is-active .nav__icon {
+  color: var(--ink);
+}
+
+.nav__item[aria-disabled='true'] {
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+.nav__icon {
+  flex-shrink: 0;
+  color: var(--ink-faint);
+}
+
+.nav__spacer {
+  flex: 1;
+}
+
+.nav__tag {
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+}
+
+.nav__item.is-active .nav__tag {
+  background: var(--shell);
+}
+
+/* --- User card --- */
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+
+.who__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--violet-pale);
+  color: var(--violet);
+  display: grid;
+  place-items: center;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.who__text {
+  min-width: 0;
+}
+
+.who__name {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.who__sub {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== Content ============================================================ */
+
+.content {
+  /* Column 2 explicitly. The rail is position:fixed, so it leaves the grid
+     flow entirely -- without this the content becomes the first in-flow child
+     and is placed in the rail's own 60px track, squeezed to nothing. */
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+
+/* --- Topbar --- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  background: var(--shell);
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.topbar__title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.topbar__spacer {
+  flex: 1;
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+.search__input {
+  width: 210px;
+  padding: 7px 10px 7px 30px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  outline: none;
+  transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+
+.search__input:focus {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 3px var(--violet-pale);
+}
+
+.page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s5);
+}
+
+/* A stacked page scrolls; its sections do not compress to fit.
+   .page.stack is a flex column, and a flex item whose overflow is not visible
+   has an automatic minimum size of zero -- so a card with overflow:hidden
+   silently shrinks and clips its content instead of making the page tall
+   enough to scroll. Pinning the children to their natural height is what puts
+   the overflow back on .page, where the scrollbar lives. */
+.page.stack > * {
+  flex: none;
+}
+
+/* ===== Buttons ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--r);
+  border: 1px solid transparent;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--solid {
+  background: var(--solid);
+  color: #fff;
+}
+
+.btn--solid:not(:disabled):hover {
+  background: var(--solid-hover);
+}
+
+.btn--primary {
+  background: var(--violet);
+  color: #fff;
+}
+
+.btn--primary:not(:disabled):hover {
+  background: var(--violet-hover);
+}
+
+.btn--ghost {
+  background: var(--surface);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+.btn--ghost:not(:disabled):hover {
+  background: var(--surface-hover);
+  border-color: var(--rule-strong);
+}
+
+.btn--danger {
+  background: var(--down);
+  color: #fff;
+}
+
+.btn--danger:not(:disabled):hover {
+  background: #b91c1c;
+}
+
+.btn--quiet {
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.btn--quiet:hover {
+  color: var(--ink);
+}
+
+.btn--icon {
+  padding: 7px;
+  background: var(--surface);
+  border-color: var(--rule);
+  color: var(--ink-muted);
+}
+
+.btn--icon:hover {
+  color: var(--ink);
+}
+
+.btn--sm {
+  padding: 4px 9px;
+  font-size: var(--text-xs);
+}
+
+/* ===== Cards ============================================================== */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.card__head--bare {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* The shot's card label: tiny icon + uppercase letterspaced grey text */
+.card__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+}
+
+.card__label svg {
+  color: var(--ink-faint);
+}
+
+.card__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.card__note {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.card__tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.card__body {
+  padding: var(--s4);
+}
+
+.card__foot {
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* ===== Stat tiles ========================================================= */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s4);
+}
+
+.stat__value {
+  font-size: var(--text-num);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.stat__foot {
+  margin-top: var(--s2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* ===== Pills ============================================================== */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pill--up {
+  background: var(--up-tint);
+  color: var(--up);
+}
+
+.pill--down {
+  background: var(--down-tint);
+  color: var(--down);
+}
+
+.pill--warn {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.pill--info {
+  background: var(--info-tint);
+  color: var(--info);
+}
+
+.pill--violet {
+  background: var(--violet-pale);
+  color: var(--violet);
+}
+
+.pill--idle {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+
+/* ===== Grid =============================================================== */
+
+.grid {
+  display: grid;
+  gap: var(--s4);
+}
+
+.grid--main {
+  grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+}
+
+.grid--split {
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .grid--main,
+  .grid--split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.narrow {
+  max-width: 560px;
+}
+
+/* ===== Bar list (single-hue magnitude) ==================================== */
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.bar__top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: 6px;
+}
+
+.bar__name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.bar__meta {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar__track {
+  height: 8px;
+  background: var(--surface-sunken);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* 4px rounded data-end, anchored to the baseline */
+.bar__fill {
+  height: 100%;
+  background: var(--violet);
+  border-radius: 4px;
+  min-width: 4px;
+  transition: width 0.3s var(--ease);
+}
+
+.bar__fill--soft {
+  background: var(--violet-soft);
+}
+
+/* ===== Activity / diagnostics list ======================================== */
+
+.feed {
+  display: flex;
+  flex-direction: column;
+}
+
+.feed__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.feed__row:last-child {
+  border-bottom: none;
+}
+
+.feed__glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.feed__glyph--warn {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.feed__glyph--info {
+  background: var(--info-tint);
+  color: var(--info);
+}
+
+.feed__glyph--error {
+  background: var(--down-tint);
+  color: var(--down);
+}
+
+.feed__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.feed__name {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.feed__sub {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.feed__side {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ===== Steps ============================================================== */
+
+.steps {
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  text-align: left;
+  transition: background 0.1s var(--ease);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.step:disabled {
+  cursor: not-allowed;
+}
+
+.step__n {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.step__n--done {
+  background: var(--violet);
+  color: #fff;
+}
+
+/* Nothing picked yet: a filled grey disc with no number reads as a bug. */
+.step__n--empty {
+  background: none;
+  border: 1.5px dashed var(--rule-strong);
+}
+
+.step__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.step__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.step__note {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* ===== Form =============================================================== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: var(--s4);
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field__label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.field__input,
+.field__select,
+.field__textarea {
+  width: 100%;
+  padding: 8px 11px;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r);
+  outline: none;
+  font-size: var(--text-sm);
+  transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+
+.field__input:focus,
+.field__select:focus,
+.field__textarea:focus {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 3px var(--violet-pale);
+}
+
+.field__input::placeholder,
+.field__textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.field__input--mono,
+.field__textarea {
+  font-family: var(--mono);
+}
+
+.field__textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.field__hint {
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* Inline link. The app had none at all until the GitHub settings arrived, so
+   this is deliberately quiet: it inherits its colour and only firms up the
+   underline on hover, so a repository name reads as a name first. */
+.link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+}
+
+.link:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Numbered instructions inside a form hint, for a procedure carried out
+   somewhere else -- creating a token on GitHub, say. A counter rather than
+   list-style, so the marker picks up the same tokens as the text. */
+.howto {
+  margin: var(--s3) 0 var(--s2);
+  padding: 0;
+  list-style: none;
+  counter-reset: howto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.howto li {
+  position: relative;
+  counter-increment: howto;
+  padding-left: 20px;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--ink-muted);
+}
+
+.howto li::before {
+  content: counter(howto) '.';
+  position: absolute;
+  left: 2px;
+  top: 0;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.field-row {
+  display: grid;
+  gap: var(--s3);
+}
+
+.field-row--2 {
+  grid-template-columns: 1fr 100px;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  margin-bottom: var(--s4);
+  background: var(--surface-sunken);
+  border-radius: var(--r-sm);
+}
+
+.segmented__opt {
+  padding: 4px 12px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.segmented__opt.is-on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  font-weight: 500;
+}
+
+/* ===== Facts ============================================================== */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.fact {
+  background: var(--surface);
+  padding: var(--s3);
+}
+
+.fact__label {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+}
+
+.fact__value {
+  margin-top: 3px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.fact__value--ok {
+  color: var(--up);
+}
+
+.fact__value--warn {
+  color: var(--warn);
+}
+
+/* ===== Table ============================================================== */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table th {
+  text-align: right;
+  font-weight: 500;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.table th:first-child,
+.table td:first-child {
+  text-align: left;
+  padding-left: var(--s4);
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: var(--s4);
+}
+
+.table td {
+  text-align: right;
+  padding: 9px var(--s3);
+  border-bottom: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table td.is-zero {
+  color: var(--ink-faint);
+}
+
+.table td.is-flagged {
+  color: var(--warn);
+}
+
+.cell-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  cursor: pointer;
+}
+
+.checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--violet);
+  cursor: pointer;
+}
+
+/* ===== Banner, empty, list ================================================ */
+
+.banner {
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r);
+  font-size: var(--text-sm);
+}
+
+.banner--error {
+  background: var(--down-tint);
+  color: var(--down);
+}
+
+.banner--ok {
+  background: var(--up-tint);
+  color: var(--up);
+}
+
+.banner--info {
+  background: var(--info-tint);
+  color: var(--info);
+}
+
+.banner--warn {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+/* A banner that carries an action, such as a retry. The message takes the room
+   it needs and the control stays on the right, wrapping under it when there is
+   not enough width for both. */
+.banner--action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.empty {
+  padding: var(--s8) var(--s4);
+  text-align: center;
+}
+
+.empty__glyph {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto var(--s3);
+  border-radius: var(--r);
+  background: var(--violet-pale);
+  color: var(--violet);
+  display: grid;
+  place-items: center;
+}
+
+.empty__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.empty__body {
+  margin: var(--s2) auto 0;
+  max-width: 44ch;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.empty__actions {
+  margin-top: var(--s4);
+  display: flex;
+  gap: var(--s2);
+  justify-content: center;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.list__row:last-child {
+  border-bottom: none;
+}
+
+.list__row:hover {
+  background: var(--surface-hover);
+}
+
+.list__open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.list__name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.list__meta {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  font-family: var(--mono);
+}
+
+.topbar__lede {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.dot-none {
+  line-height: 1;
+}
+
+.context__area {
+  min-height: 420px;
+  font-family: var(--sans);
+  font-size: var(--text-base);
+  line-height: 1.65;
+}
+
+/* ===== Step tracker ======================================================= */
+
+.tracker {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: var(--s6) var(--s4) var(--s5);
+}
+
+.tracker__step {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+/* Connector sits between the two marks, with a gap either side rather than
+   running under them. */
+.tracker__step[data-connected]::before {
+  content: '';
+  position: absolute;
+  top: 15px;
+  left: calc(-50% + 24px);
+  right: calc(50% + 24px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rule);
+}
+
+.tracker__step[data-connected='on']::before {
+  background: var(--violet);
+}
+
+.tracker__hit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: 0 var(--s3);
+  background: none;
+  border: none;
+  text-align: center;
+}
+
+.tracker__hit:disabled {
+  cursor: default;
+}
+
+.tracker__mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1.5px solid var(--rule-strong);
+  color: var(--ink-faint);
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.tracker__n {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.is-done .tracker__mark {
+  background: var(--violet);
+  border-color: var(--violet);
+  color: #fff;
+}
+
+.is-current .tracker__mark {
+  border-color: var(--violet);
+  color: var(--violet);
+  box-shadow: 0 0 0 4px var(--violet-pale);
+}
+
+.tracker__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink-faint);
+  line-height: 1.2;
+}
+
+.is-done .tracker__title,
+.is-current .tracker__title {
+  color: var(--ink);
+}
+
+/* Two lines maximum, so one long status cannot make the row taller than the
+   others and knock the marks out of alignment. */
+.tracker__status {
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  line-height: 1.4;
+  max-width: 24ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.is-current .tracker__status {
+  color: var(--ink-muted);
+}
+
+.tracker__hit:not(:disabled):hover .tracker__title {
+  color: var(--ink);
+}
+
+.tracker__hit:not(:disabled):hover .tracker__mark {
+  border-color: var(--violet);
+}
+
+@media (max-width: 900px) {
+  .tracker {
+    flex-direction: column;
+    gap: var(--s4);
+    padding: var(--s4);
+  }
+
+  .tracker__step[data-connected]::before {
+    display: none;
+  }
+
+  .tracker__hit {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    gap: var(--s3);
+    padding: 0;
+  }
+
+  .tracker__hit > .tracker__title {
+    min-width: 92px;
+  }
+
+  .tracker__status {
+    max-width: none;
+    -webkit-line-clamp: none;
+    line-clamp: none;
+  }
+}
+
+.next-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunken);
+  border-radius: 0 0 var(--r-card) var(--r-card);
+}
+
+.next-bar__text {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.next-bar__text b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.next-bar__spacer {
+  flex: 1;
+}
+
+/* ===== Column detail ====================================================== */
+
+.col-detail {
+  padding: 0 !important;
+  background: var(--surface-sunken);
+}
+
+.cols {
+  display: flex;
+  flex-direction: column;
+}
+
+.cols__row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.1fr) minmax(110px, 1fr) auto minmax(110px, 0.9fr) minmax(0, 1.2fr);
+  gap: var(--s3);
+  align-items: center;
+  padding: 7px var(--s4);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.cols__row:last-child {
+  border-bottom: none;
+}
+
+.cols__name {
+  font-weight: 500;
+}
+
+.cols__type,
+.cols__stat {
+  color: var(--ink-muted);
+}
+
+.cols__flags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cols__values {
+  color: var(--violet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rot-open,
+.rot-shut {
+  transition: transform 0.15s var(--ease);
+  color: var(--ink-faint);
+}
+
+.rot-open {
+  transform: rotate(0deg);
+}
+
+.rot-shut {
+  transform: rotate(-90deg);
+}
+
+.is-excluded td {
+  opacity: 0.45;
+}
+
+.cell-expand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+/* ===== Table purposes ===================================================== */
+
+.purposes {
+  display: flex;
+  flex-direction: column;
+}
+
+.purpose {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.4fr);
+  gap: var(--s4);
+  align-items: center;
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.purpose:last-child {
+  border-bottom: none;
+}
+
+.purpose:hover {
+  background: var(--surface-hover);
+}
+
+.purpose__name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.purpose__facts {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.purpose__cols {
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.purpose__input {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 800px) {
+  .purpose {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s2);
+  }
+}
+
+/* Member names run to forty characters and differ only at the end
+   (..._approved / ..._denied / ..._cancelled), so columns are wide enough to
+   read most of one at a glance and a long one wraps rather than truncating --
+   an ellipsis would hide the part that tells them apart. */
+.picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 1px var(--s4);
+}
+
+.pick {
+  display: flex;
+  align-items: start;
+  gap: var(--s2);
+  /* Without this the row cannot shrink below its content and overflows the
+     grid track, printing one member on top of the next. */
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.pick .checkbox {
+  flex: none;
+  /* Holds the box on the first line when the name wraps to a second. */
+  margin-top: 2px;
+}
+
+.pick__text {
+  min-width: 0;
+  /* These names have no spaces, so only `anywhere` will break them. */
+  overflow-wrap: anywhere;
+}
+
+.pick:hover {
+  background: var(--surface-sunken);
+}
+
+/* --- Generated YAML viewer ------------------------------------------------ */
+
+.yaml {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  border-top: 1px solid var(--code-rule);
+  background: var(--code-bg);
+}
+
+.yaml__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s3);
+  border-right: 1px solid var(--code-rule);
+  background: var(--code-chrome);
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.yaml__tab {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  /* The global button reset only covers font and cursor, so without these the
+     browser's own buttonface background and outset border show through. */
+  background: none;
+  border: none;
+  border-radius: 7px;
+  font-size: var(--text-sm);
+  color: var(--code-ink-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.yaml__tab:hover {
+  background: var(--code-hover);
+  color: var(--code-ink);
+}
+
+/* A violet-tinted ground rather than solid brand violet: at this size a full
+   violet block is the loudest thing on the panel and pulls the eye off the
+   code it is meant to be labelling. */
+.yaml__tab.is-active {
+  background: var(--code-active);
+  color: var(--code-ink);
+  font-weight: 500;
+}
+
+.yaml__tab.is-active svg {
+  color: var(--code-key);
+}
+
+/* The filename is the only part that can overflow; the icon must not shrink,
+   and it sits on the first line when a long name wraps. */
+.yaml__tab svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+/* Table names are arbitrary, so no column width makes every filename fit.
+   Wrapping shows the whole name at any length; truncating never would. */
+.yaml__name {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* CodeMirror scrolls its own viewport, so the wrapper only caps the height
+   and stops a long line forcing the grid column wider. */
+.yaml__body {
+  min-width: 0;
+}
+
+.yaml__body .cm-scroller {
+  max-height: 520px;
+}
+
+/* The lint gutter is empty on a clean file; without a reserved width the
+   whole document shifts sideways the moment a marker appears. */
+.yaml__body .cm-gutter-lint {
+  width: 14px;
+}
+
+@media (max-width: 900px) {
+  .yaml {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .yaml__list {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+/* --- Generation progress modal -------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: var(--s4);
+  background: rgba(24, 24, 27, 0.4);
+  backdrop-filter: blur(2px);
+  animation: scrim-in 0.14s var(--ease);
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-shell);
+  animation: modal-in 0.16s var(--ease);
+}
+
+.modal__head,
+.modal__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.modal__foot {
+  padding-top: var(--s3);
+  border-top: 1px solid var(--rule);
+}
+
+/* The hint takes the slack so the button stays hard right. */
+.modal__foot .field__hint {
+  flex: 1;
+  margin: 0;
+}
+
+.joblog {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding: var(--s1) 0;
+}
+
+.joblog__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s2) var(--s2);
+  border-radius: var(--r-sm);
+}
+
+.joblog__row.is-running {
+  background: var(--violet-pale);
+}
+
+.joblog__mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--ink-faint);
+}
+
+.joblog__row.is-done .joblog__mark {
+  color: var(--up);
+}
+
+.joblog__row.is-failed .joblog__mark {
+  color: var(--down);
+}
+
+.joblog__text {
+  min-width: 0;
+}
+
+/* Both spans are inline by default, which would run the label and the detail
+   together on one line. */
+.joblog__label,
+.joblog__detail {
+  display: block;
+}
+
+.joblog__label {
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.joblog__row.is-running .joblog__label {
+  color: var(--violet-press);
+  font-weight: 500;
+}
+
+.joblog__detail {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--violet-soft);
+  border-top-color: var(--violet);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .modal {
+    animation: none;
+  }
+
+  .spinner {
+    animation-duration: 2s;
+  }
+}
+
+/* The model-files card is an editor panel, not page content: its chrome goes
+   dark with the code so the whole thing reads as one surface. */
+.card--code {
+  background: var(--code-bg);
+  border-color: var(--code-rule);
+  overflow: hidden;
+}
+
+.card--code .card__head,
+.card--code .card__foot {
+  border-color: var(--code-rule);
+  background: var(--code-chrome);
+}
+
+.card--code .card__label {
+  color: var(--code-ink-muted);
+}
+
+.card--code .field__hint {
+  color: var(--code-ink-muted);
+}
+
+.card--code .field__hint code {
+  color: var(--code-ink);
+}
+
+.card--code .pill--idle {
+  background: var(--code-bg);
+  color: var(--code-ink-muted);
+}
+
+.card--code .btn--ghost {
+  background: transparent;
+  border-color: var(--code-rule);
+  color: var(--code-ink);
+}
+
+.card--code .btn--ghost:not(:disabled):hover {
+  background: var(--code-hover);
+  border-color: var(--code-ink-faint);
+}
+
+/* --- Model files, full screen --------------------------------------------- */
+
+/* The default scrim centres a small dialog; this one is meant to be filled. */
+.scrim--wide {
+  place-items: stretch;
+  padding: var(--s5);
+}
+
+.card--full {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0 auto;
+  width: min(1500px, 100%);
+  box-shadow: var(--shadow-shell);
+}
+
+/* Each level needs min-height: 0, or a flex child refuses to shrink below its
+   content and the editor pushes the panel past the bottom of the window. */
+.card--full .yaml {
+  flex: 1;
+  min-height: 0;
+}
+
+.card--full .yaml__list {
+  max-height: none;
+}
+
+.card--full .yaml__body {
+  min-height: 0;
+  display: flex;
+}
+
+/* @uiw/react-codemirror wraps the editor in its own div, which is what has to
+   fill the column before .cm-editor can. */
+.card--full .yaml__body > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.card--full .yaml__body .cm-editor {
+  height: 100%;
+}
+
+.card--full .yaml__body .cm-scroller {
+  max-height: none;
+}
+
+/* No file list: the editor takes the whole width. */
+.yaml--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.card--full .card__foot {
+  gap: var(--s3);
+}
+
+/* The Esc hint sits hard right, away from the file path. */
+.card--full .card__foot .field__hint:first-child {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .scrim--wide {
+    padding: 0;
+  }
+
+  .card--full {
+    border-radius: 0;
+    border: none;
+  }
+}
+
+/* --- View builder: members under a cube ----------------------------------- */
+
+/* Members belong to the cube row above them, so they are indented under it
+   rather than spanning the full card like a sibling section. */
+.members {
+  padding: var(--s3) var(--s4) var(--s4) 46px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunken);
+  box-shadow: inset 2px 0 0 var(--violet-rule);
+}
+
+/* The list already sits inside a scrolling page; a second scrollbar for a
+   twenty-item list just traps the wheel. */
+.members .picks {
+  max-height: none;
+}
+
+/* The card's rounded corners clip nothing by default, so the tinted members
+   block bleeds past them at the bottom of the list. */
+.card--clip {
+  overflow: hidden;
+}
+
+/* The editor column is short and the cube list is long; sticking it keeps the
+   name and the running count in view while picking members. */
+.sticky-col {
+  position: sticky;
+  top: var(--s4);
+}
+
+/* Nearly every member name is shared by some other cube, so this stays quiet
+   until the member is actually selected and the clash becomes real. */
+.shared {
+  margin-left: 5px;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.pick input:checked ~ .shared {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+/* The selection, banded across the top of the section that assembles it. */
+.chosen-bar {
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunken);
+}
+
+.chosen-bar__count {
+  margin-bottom: var(--s2);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* The running selection, as removable chips. A view is assembled across
+   several cubes, and without this the only way to see what is in it is to
+   reopen each one in turn. */
+.chosen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.chosen__cube {
+  width: 100%;
+  margin-top: var(--s2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+}
+
+.chosen__cube:first-child {
+  margin-top: 0;
+}
+
+.chosen__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface-sunken);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-muted);
+}
+
+.chosen__chip:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.chosen__x {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink-faint);
+  line-height: 1;
+}
+
+.chosen__chip:hover .chosen__x {
+  color: var(--down);
+  background: var(--down-tint);
+}
+
+.members__group {
+  margin: var(--s3) 0 var(--s2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+}
+
+/* The cube row is a button and the member list is not, so the chevron needs to
+   sit at the end rather than inheriting the step's own spacing. */
+.step .step__text {
+  flex: 1;
+}
+
+/* An edited file carries a dot in the list, amber while unsaved. */
+.yaml__dot {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.field__hint--error {
+  color: var(--down);
+}
+
+/* The editable editor needs a visible caret line and a little more contrast
+   than a viewer does. */
+.card--code .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* --- Toasts ---------------------------------------------------------------- */
+
+.toasts {
+  position: fixed;
+  right: var(--s5);
+  bottom: var(--s5);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  /* The strip spans the corner but must not swallow clicks on the page. */
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  width: min(380px, calc(100vw - var(--s5) * 2));
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  animation: toast-in 0.18s var(--ease);
+}
+
+.toast--error {
+  border-color: var(--down);
+}
+
+.toast__glyph {
+  flex: none;
+  margin-top: 1px;
+}
+
+.toast--error .toast__glyph {
+  color: var(--down);
+}
+
+.toast--success .toast__glyph {
+  color: var(--up);
+}
+
+.toast--info .toast__glyph {
+  color: var(--info);
+}
+
+.toast__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.toast__body {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.toast__action {
+  margin-top: var(--s2);
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--violet);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.toast__close {
+  flex: none;
+  padding: 0 2px;
+  font-size: var(--text-md);
+  line-height: 1;
+  color: var(--ink-faint);
+  background: none;
+  border: none;
+}
+
+.toast__close:hover {
+  color: var(--ink);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* A member already contributed by another cube in this view. */
+.pick input:disabled {
+  cursor: not-allowed;
+}
+
+.pick input:disabled ~ .mono {
+  color: var(--ink-faint);
+}
+
+.pick--clash {
+  background: var(--down-tint);
+}
+
+.shared--clash {
+  color: var(--down);
+  font-weight: 500;
+}
+
+/* --- Add-member popup ------------------------------------------------------ */
+
+.modal--form {
+  width: min(560px, 100%);
+}
+
+/* The form scrolls on a short window; the head and the buttons stay put. */
+.modal__body {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.modal--form .segmented {
+  align-self: flex-start;
+  margin-bottom: 0;
+}
+
+.checks {
+  display: flex;
+  gap: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+.modal--form .banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+/* Saved edits are violet, unsaved ones amber: "differs from generated" and
+   "not written yet" need different attention, and one dot for both hid which. */
+.yaml__dot--saved {
+  background: var(--code-key);
+}
+
+/* The retrieval question box: input takes the room, button stays put. */
+.ask {
+  display: flex;
+  gap: var(--s2);
+}
+
+.ask .field__input {
+  flex: 1;
+}
+
+/* The filled-in prompt, shown under the editor. Read-only, so it needs to look
+   different from the textarea above it rather than like a second field. */
+.preview {
+  margin: var(--s2) 0 0;
+  padding: var(--s3);
+  max-height: 340px;
+  overflow: auto;
+  border-radius: var(--r);
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* --- Prompt management ----------------------------------------------------- */
+
+.lede {
+  margin: 0 0 var(--s4);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ink-muted);
+}
+
+/* The flow list. Thin rules, no zebra; the active row is the only fill. */
+.promptlist {
+  display: flex;
+  flex-direction: column;
+}
+
+.promptlist__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s var(--ease);
+}
+
+.promptlist__row:last-child {
+  border-bottom: none;
+}
+
+.promptlist__row:hover {
+  background: var(--surface-hover);
+}
+
+.promptlist__row.is-active {
+  background: var(--violet-pale);
+}
+
+/* The step number: the order is the order the flow runs. */
+.promptlist__n {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-top: 1px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.promptlist__row.is-active .promptlist__n {
+  background: var(--violet);
+  color: #fff;
+}
+
+.promptlist__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.promptlist__name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.promptlist__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Two quiet markers, so the loud one below can be the required count. */
+.tagx {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.tagx--on {
+  color: var(--violet-press);
+  font-weight: 500;
+}
+
+.req {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+/* --- The variables strip --------------------------------------------------- */
+
+/* The one thing that was invisible before: which tokens must stay in the body.
+   Given its own panel above the editor rather than a line of hint text. */
+.vars {
+  margin-bottom: var(--s4);
+  padding: var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface-sunken);
+}
+
+.vars__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+}
+
+.vars__hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.vars__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+/* A token is the thing you act on, so it is a button, not a label. */
+/* An indicator, not a control: it reports whether the token is in the body
+   above. Nothing to click, so it must not look clickable. */
+.var {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  text-align: left;
+  cursor: default;
+}
+
+.var__token {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.var__role {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.var--required {
+  border-color: var(--violet-rule);
+  background: var(--violet-pale);
+}
+
+.var--required .var__token {
+  color: var(--violet-press);
+  font-weight: 500;
+}
+
+.var--required .var__role {
+  color: var(--violet-press);
+  font-weight: 600;
+}
+
+/* Required and absent: the state the whole panel exists to make obvious. */
+.var--missing {
+  border-color: var(--down);
+  background: var(--down-tint);
+}
+
+.var--missing .var__token,
+.var--missing .var__role {
+  color: var(--down);
+  font-weight: 600;
+}
+
+.prompt__area {
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+/* --- Agent ----------------------------------------------------------------- */
+
+/* The transcript is the only thing that scrolls; the composer below it stays. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s7);
+  padding-bottom: var(--s7);
+  /* The conversation keeps the app's neutral palette -- the "classic" feel
+     is carried by the serif answers and the reading layout, not by a separate
+     colour world, so the page sits in the same theme as the rest of the app.
+     These aliases map the chat's internal names onto the shared tokens. */
+  --paper: var(--canvas);
+  --paper-rule: var(--rule);
+  --paper-sunken: var(--surface-sunken);
+  --paper-code-bg: var(--code-bg);
+  --paper-code-ink: var(--code-ink);
+  --paper-code-rule: var(--code-rule);
+  --paper-ink-muted: var(--ink-faint);
+  background: var(--canvas);
+}
+
+.chat__intro {
+  max-width: 560px;
+  margin: 14vh auto var(--s6);
+  text-align: center;
+}
+
+.chat__greeting {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: var(--s3);
+}
+
+/* The explanatory line under the greeting, quieter than it was. */
+.chat__intro .lede {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+/* One exchange: the question, then the answer, in a narrow reading column.
+   740px keeps a line near 70 characters -- the width prose has been set to
+   for centuries, and why these pages feel calm rather than busy. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.said {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s4);
+}
+
+/* The question sits to the right, quiet. A loud bubble competes with the
+   answer for the eye; a soft neutral one just says "this is what I asked". */
+.said--you {
+  justify-content: flex-end;
+}
+
+/* The assistant's mark: a small serif-era medallion, outlined rather than
+   filled, so the answer beside it is what carries weight. */
+.said__mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--paper-rule);
+  color: var(--violet-press);
+  box-shadow: var(--shadow-sm);
+}
+
+.said__mark--bad {
+  background: var(--down-tint);
+  border-color: transparent;
+  color: var(--down);
+}
+
+.bubble {
+  line-height: 1.7;
+}
+
+/* The question: a soft, warm, right-aligned bubble. */
+.bubble--asked {
+  max-width: 80%;
+  padding: var(--s3) var(--s4);
+  border-radius: 18px 18px 4px 18px;
+  background: var(--surface);
+  border: 1px solid var(--paper-rule);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  font-size: var(--text-md);
+}
+
+/* The answer: flowing serif prose, no box. This is the whole redesign --
+   the reply reads like something written, the way ChatGPT and Claude present
+   theirs, rather than a message in a chat app. */
+.bubble--agent {
+  flex: 1;
+  min-width: 0;
+  padding-top: 3px;
+}
+
+.bubble--working {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--ink-muted);
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+}
+
+.bubble--failed {
+  color: var(--down);
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+}
+
+.bubble__text {
+  white-space: pre-wrap;
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.75;
+  color: var(--ink);
+  letter-spacing: 0.005em;
+}
+
+/* The provenance line under an answer: understated, no dividing rule. In a
+   classic layout the metadata whispers. */
+.bubble__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  font-family: var(--sans);
+}
+
+.working {
+  margin-top: var(--s4);
+  padding: var(--s4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  border: 1px solid var(--paper-rule);
+  font-family: var(--sans);
+}
+
+.working__row {
+  display: flex;
+  gap: var(--s3);
+  padding: 3px 0;
+  font-size: var(--text-xs);
+}
+
+.working__step {
+  flex: none;
+  width: 116px;
+  font-family: var(--mono);
+  color: var(--violet-press);
+}
+
+.working__detail {
+  min-width: 0;
+  color: var(--ink-muted);
+  word-break: break-word;
+}
+
+.working__label {
+  margin: var(--s4) 0 var(--s1);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+}
+
+/* --- Warm theming for the SQL + rows inside an answer (chat only) --------- */
+
+.chat .working__label {
+  color: var(--paper-ink-muted);
+}
+
+/* The SQL block as a warm parchment inset, not the app's near-black terminal. */
+.chat .working .preview {
+  background: var(--paper-code-bg);
+  color: var(--paper-code-ink);
+  border: 1px solid var(--paper-code-rule);
+}
+
+/* The rows table, warmed: warm rules, a warm-muted header, warm hover. */
+.chat .working .table th {
+  color: var(--paper-ink-muted);
+  border-bottom-color: var(--paper-code-rule);
+}
+
+.chat .working .table td {
+  border-bottom-color: var(--paper-rule);
+  color: #3a332b;
+}
+
+.chat .working .table tbody tr:hover {
+  background: var(--paper-sunken);
+}
+
+/* The step log reads as data, so give it a warm inset of its own above the
+   SQL, separating the trace from the query. */
+.chat .working__row {
+  padding: 4px 0;
+}
+
+.chat .working__step {
+  color: var(--violet-press);
+}
+
+.chat .working__detail {
+  color: var(--paper-ink-muted);
+}
+
+/* The composer: one rounded input on the warm ground, centered on the same
+   narrow column as the conversation. */
+.composer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: 1px solid var(--paper-rule);
+  background: var(--paper);
+}
+
+.composer__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 6px 6px 6px var(--s3);
+  border-radius: 26px;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 24px rgba(24, 24, 27, 0.07);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.composer__inner:focus-within {
+  border-color: var(--violet-rule);
+  box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 28px rgba(108, 76, 241, 0.12);
+}
+
+/* The input is now borderless inside the rounded shell. */
+.composer__inner .field__input {
+  flex: 1;
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding: 11px 4px;
+  font-size: var(--text-md);
+}
+
+.composer__inner .field__input:focus {
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+/* Send becomes a circular button that lives inside the pill. */
+.composer__inner .btn--solid {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+
+/* --- Files: the source switch and the file picker ------------------------- */
+
+/* The segmented control was built for a modal body, where it carries its own
+   bottom margin. In a topbar it sits inline with the other actions. */
+.segmented--inline {
+  margin: 0;
+}
+
+/* The file a question is asked about: a button inside the composer bar,
+   left of the input, with a menu that opens upward. */
+.filepick {
+  position: relative;
+  flex: none;
+}
+
+.filepick__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 100%;
+  max-width: 240px;
+  padding: 0 var(--s3) 0 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+
+.filepick__btn:hover,
+.filepick__btn.is-open {
+  border-color: var(--violet-rule);
+}
+
+.filepick__btn.is-open {
+  box-shadow: 0 0 0 3px var(--violet-pale);
+}
+
+.filepick__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.filepick__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  background: var(--violet-pale);
+  color: var(--violet);
+}
+
+.filepick__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* Points up, toward where the menu opens, and flips once it has. */
+.filepick__chev {
+  flex: none;
+  color: var(--ink-faint);
+  transform: rotate(180deg);
+  transition: transform 0.15s var(--ease);
+}
+
+.filepick__btn.is-open .filepick__chev {
+  transform: rotate(0deg);
+}
+
+.filepick__menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: 300px;
+  padding: var(--s1);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.filepick__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s2) var(--s2) var(--s1);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+}
+
+.filepick__count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* Exactly three options tall; the fourth onward scrolls. Each option has a
+   fixed height so "three" is exact rather than approximate. */
+.filepick__sep {
+  padding: var(--s2) var(--s2) var(--s1);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--rule);
+  margin-top: var(--s1);
+}
+
+.filepick__list {
+  --filepick-opt: 48px;
+  max-height: calc(var(--filepick-opt) * 3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.filepick__list .filepick__opt {
+  height: var(--filepick-opt);
+}
+
+.filepick__opt,
+.filepick__manage {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s2);
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.filepick__opt:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.filepick__opt:not(:disabled):hover,
+.filepick__manage:hover {
+  background: var(--surface-hover);
+}
+
+.filepick__opt.is-on {
+  background: var(--violet-pale);
+}
+
+.filepick__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.filepick__optname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.filepick__optsub {
+  font-size: var(--text-2xs);
+  color: var(--ink-muted);
+}
+
+.filepick__tick {
+  flex: none;
+  color: var(--violet);
+}
+
+.filepick__manage {
+  margin-top: var(--s1);
+  border-top: 1px solid var(--rule);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+/* --- Files page: the drop target ----------------------------------------- */
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s7) var(--s5);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  text-align: center;
+  color: var(--ink-muted);
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+
+.dropzone.is-over {
+  border-color: var(--violet);
+  background: var(--violet-pale);
+  color: var(--ink);
+}
+
+.dropzone__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--violet-pale);
+  color: var(--violet);
+}
+
+.dropzone__title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.dropzone__hint {
+  font-size: var(--text-xs);
+}
+
+/* A file that failed to import keeps its reason in the row. */
+.feed__sub--error {
+  color: var(--down);
+}
+
+/* A file's tables, under its row: one table per block, one line per column.
+   The same thin-ruled table as the Agent's result rows, so a schema reads
+   like data rather than like a paragraph of monospace. */
+.filecols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4) var(--s4) 52px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunken);
+}
+
+.filecols__block {
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.filecols__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunken);
+}
+
+.filecols__head svg {
+  color: var(--ink-faint);
+}
+
+.filecols__name {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.filecols__meta {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* Text columns read left to right; the numeric right-alignment the shared
+   table uses for figures is wrong for names and types. */
+.table--left th,
+.table--left td {
+  text-align: left;
+}
+
+.table--left td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: top;
+}
+
+.filecols__label {
+  color: var(--ink-muted);
+}
+
+.filecols__same {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.filecols__sample {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* A column's type, as a quiet tag rather than a shouted word. */
+.typepill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-muted);
+}
+
+/* The distinct values of a category column. These are what the model is
+   shown, so a user can see exactly which spellings a question can filter on. */
+.valchips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.valchip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--violet-pale);
+  color: var(--violet);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+
+/* --- Confirm dialog -------------------------------------------------------- */
+
+.modal--confirm {
+  width: min(460px, 100%);
+  gap: 0;
+  padding: 0;
+}
+
+/* Icon beside the text, not above it: the eye lands on the mark, then reads
+   straight into the sentence that matters. */
+.confirm {
+  display: flex;
+  gap: var(--s4);
+  padding: var(--s5) var(--s5) var(--s4);
+}
+
+.confirm__mark {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+
+.confirm__mark--danger {
+  background: var(--down-tint);
+  color: var(--down);
+}
+
+.confirm__text {
+  min-width: 0;
+}
+
+.confirm__title {
+  margin: 2px 0 var(--s2);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.confirm__body {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
+
+/* Consequences read as a list because they are separate facts; prose would
+   bury the one the reader needs. */
+.confirm__points {
+  margin: var(--s3) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirm__points li {
+  position: relative;
+  padding-left: 16px;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--ink-muted);
+}
+
+.confirm__points li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+
+/* A number input sized to its value. Full width for a one-to-five answer reads
+   as a text field waiting for a sentence. */
+.field__input--num {
+  width: 5.5rem;
+}
+
+/* A dialog that asks for something as well as confirming it. */
+.confirm .field {
+  margin-top: var(--s4);
+}
+
+.confirm__foot {
+  justify-content: flex-end;
+  padding: var(--s3) var(--s5) var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+/* ===== Tabs =============================================================== */
+/* A horizontal tab bar on the light surface. Underline rather than a pill or a
+   filled block: these sit directly above a card, and a filled tab competes
+   with the card's own head for the top of the page. */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s1);
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+  /* The active tab's underline has to land on the bar's own rule, not above
+     it. */
+  margin-bottom: -1px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  /* The global button reset covers only font and cursor, so the browser's own
+     buttonface background and outset border would otherwise show through. */
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: var(--text-base);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.is-active {
+  color: var(--ink);
+  font-weight: 500;
+  border-bottom-color: var(--violet);
+}
+
+.tab__num {
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+}
+
+.tab.is-active .tab__num {
+  color: var(--violet);
+}
+
+/* A dot marking a tab that needs attention -- a project with no key cannot do
+   anything the Model tab is for, and that is worth seeing before you open it. */
+.tab__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--down);
+}
+
+/* ===== Settings =========================================================== */
+/* Full width, like every other page in the app. Settings was the one screen
+   capped at 860px, which left half the window empty on a wide display. The
+   width is spent inside the cards rather than on stretching single inputs:
+   a 1700px-wide text field is worse than a short one. */
+
+.settings__panel {
+  padding-top: var(--s6);
+}
+
+/* Width follows the content rather than the window. The Model tab holds a
+   thirteen-row table and earns the full width; the others are short forms, and
+   a 1600px text input for a repository name or a project name is worse than a
+   short one with space beside it. */
+.settings__panel--form {
+  max-width: 820px;
+}
+
+/* A short control in a wide card. Inputs are sized to their content -- a
+   project name is a few words, so a field spanning the window reads as a
+   mistake however much room there is. */
+.settings__short {
+  max-width: 480px;
+}
+
+/* The Model card: credentials on the left, the step table on the right. The
+   steps are the reason this tab needs room; the key and the default model are
+   two short fields and gain nothing from it. */
+.llm {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+.llm__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-width: 0;
+}
+
+/* Explanatory prose in the wide column. Without a measure it sets as one
+   1200px line, which is past the point where the eye reliably finds the start
+   of the next one. */
+.llm__col--steps .field__hint {
+  max-width: 88ch;
+}
+
+/* The divider reads as a column rule rather than a card edge. */
+.llm__col--steps {
+  padding-left: var(--s6);
+  border-left: 1px solid var(--rule);
+}
+
+/* --- Model tab: the step list scrolls on its own ------------------------- */
+/* Thirteen rows are taller than the window, and scrolling the page to reach
+   them takes the key and the default model off screen with them. Instead the
+   card is pinned to the height of the view and only the right column scrolls,
+   so the credentials stay put and the tabs stay reachable.
+   
+   Every link in the chain needs min-height:0: a flex item's automatic minimum
+   size is its content, so without it the column refuses to shrink below the
+   full height of thirteen rows and nothing ever overflows. */
+.settings--fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.settings--fill .settings__panel,
+.settings--fill .card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings--fill .card__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings--fill .llm {
+  flex: 1;
+  min-height: 0;
+  /* Stretch, not start: the right column has to be as tall as the row before
+     it can overflow, and the column rule then runs the full height. */
+  align-items: stretch;
+}
+
+/* The column holds a heading, an explanation and the table. Only the table
+   scrolls: scrolling the heading away takes the Hide steps toggle with it and
+   leaves the rows unlabelled. */
+.settings--fill .llm__col--steps {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings--fill .llm__col--steps > .field {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings--fill .llm__col--steps .steps {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Under this height the pinned card leaves the table about two rows tall,
+   which is worse than simply scrolling the page. Same reset as the
+   one-column case below. */
+@media (max-height: 760px) {
+  .settings--fill,
+  .settings--fill .settings__panel,
+  .settings--fill .card {
+    display: block;
+    height: auto;
+    min-height: 0;
+  }
+
+  .settings--fill .card__body {
+    overflow: visible;
+  }
+
+  .settings--fill .llm__col--steps,
+  .settings--fill .llm__col--steps > .field {
+    display: block;
+    overflow: visible;
+  }
+
+  .settings--fill .llm__col--steps .steps {
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 1100px) {
+  .llm {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s5);
+  }
+
+  .llm__col--steps {
+    padding-left: 0;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+    padding-top: var(--s5);
+  }
+
+  /* One column stacked: the page scrolls as a whole again, because a short
+     inner scroller inside a stack is harder to use than the page itself. */
+  .settings--fill,
+  .settings--fill .settings__panel,
+  .settings--fill .card {
+    display: block;
+    height: auto;
+    min-height: 0;
+  }
+
+  .settings--fill .card__body {
+    overflow: visible;
+  }
+
+  .settings--fill .llm__col--steps,
+  .settings--fill .llm__col--steps > .field {
+    display: block;
+    overflow: visible;
+  }
+
+  .settings--fill .llm__col--steps .steps {
+    overflow: hidden;
+  }
+}
+
+/* ===== Step table ========================================================= */
+/* Thin rules, no zebra striping, hover to track across the row -- the spec
+   sheet pattern. Thirteen of these stack, so anything heavier (a card each,
+   or alternating fills) turns the list into noise. */
+
+.steps {
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.steps__stage {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+}
+
+.steps__stage:not(:first-child) {
+  border-top: 1px solid var(--rule);
+}
+
+.step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 215px auto;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3);
+  border-bottom: 1px solid var(--rule);
+  transition: background 0.12s var(--ease);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step:hover {
+  background: var(--surface-hover);
+}
+
+.step__name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.step__purpose {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* The chosen model and the Test button sit in their own columns, so every row
+   lines up vertically however long the purpose text runs. */
+.step__pick {
+  min-width: 0;
+}
+
+/* A result belongs to the row above it, so it spans the full width and loses
+   the row's own hover. */
+.step__result {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s1);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+}
+
+.step__result--ok {
+  background: var(--up-tint);
+  color: #14532d;
+}
+
+.step__result--bad {
+  background: var(--down-tint);
+  color: #7f1d1d;
+}
+
+/* Not the model's fault -- no view yet, nothing generated. Worth saying, but
+   not worth a red row. */
+.step__result--note {
+  background: var(--info-tint);
+  color: #1e3a5f;
+}
+
+.step__meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  opacity: 0.75;
+}
+
+.step--inherited .step__pick .field__input {
+  color: var(--ink-muted);
+}
+
+/* ===== Danger zone ======================================================== */
+/* Set apart by its rule, not by a red fill: the card is only dangerous once
+   you press the button, and a permanently red panel trains people to ignore
+   it. */
+
+.card--danger {
+  border-color: var(--down-tint);
+}
+
+.card--danger .card__head {
+  border-bottom-color: var(--down-tint);
+}
+
+.card--danger .card__title {
+  color: var(--down);
+}
+
+@media (max-width: 900px) {
+  .step {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ===== Stored-secret line ================================================= */
+/* A secret that is set is stated, not implied by a placeholder in an empty
+   field. The field only comes back when Replace is pressed, so "a key is
+   stored" and "I am changing the key" are different-looking states rather
+   than the same text box. */
+
+.keyline {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface-sunken);
+  font-size: var(--text-base);
+}
+
+.keyline > svg {
+  flex: none;
+  color: var(--up);
+}
+
+.keyline__text {
+  min-width: 0;
+}
+
+.keyline__when {
+  color: var(--ink-muted);
+}
+
+.keyline .btn {
+  margin-left: auto;
+  flex: none;
+}

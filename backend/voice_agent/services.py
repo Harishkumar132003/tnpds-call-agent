@@ -1,0 +1,185 @@
+"""Factories for the Sarvam speech services and the LLM used by the pipeline.
+
+Each factory only *constructs* a Pipecat service; no network connection is made
+until the pipeline starts, which keeps these functions cheap, unit-testable and
+usable as a start-up preflight check.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from pipecat.services.llm_service import LLMService
+from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.sarvam.llm import SarvamLLMService
+from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.services.sarvam.tts import TTS_MODEL_CONFIGS, SarvamTTSService, get_speakers_for_model
+
+from voice_agent.config import ConfigurationError, LLMProvider, Settings
+from voice_agent.languages import get_language
+from voice_agent.prompts import build_system_prompt
+
+if TYPE_CHECKING:
+    from voice_agent.knowledge.service import KnowledgeService
+
+
+def build_stt(settings: Settings) -> SarvamSTTService:
+    """Create the streaming Sarvam speech-to-text service."""
+    language = (
+        None
+        if settings.stt_auto_detect_language
+        else get_language(settings.agent_language).pipecat_language
+    )
+    return SarvamSTTService(
+        api_key=settings.sarvam_api_key.get_secret_value(),
+        mode=settings.sarvam_stt_mode,
+        settings=SarvamSTTService.Settings(
+            model=settings.sarvam_stt_model,
+            language=language,
+        ),
+    )
+
+
+def build_tts(settings: Settings, sample_rate: int | None = None) -> SarvamTTSService:
+    """Create the streaming Sarvam text-to-speech service.
+
+    ``sample_rate`` lets telephony sessions ask Sarvam for 8 kHz directly
+    instead of synthesising at 24 kHz and downsampling.
+    """
+    language = get_language(settings.agent_language)
+    _validate_tts_options(settings)
+    tts_settings = SarvamTTSService.Settings(
+        model=settings.sarvam_tts_model,
+        language=language.pipecat_language,
+        pace=settings.sarvam_tts_pace,
+    )
+    if settings.sarvam_tts_speaker:
+        tts_settings.voice = settings.sarvam_tts_speaker
+    return SarvamTTSService(
+        api_key=settings.sarvam_api_key.get_secret_value(),
+        sample_rate=sample_rate,
+        settings=tts_settings,
+    )
+
+
+def _validate_tts_options(settings: Settings) -> None:
+    """Reject speaker/pace values Pipecat would otherwise silently ignore or clamp."""
+    model = settings.sarvam_tts_model
+    config = TTS_MODEL_CONFIGS.get(model)
+    if config is None:
+        allowed = ", ".join(sorted(TTS_MODEL_CONFIGS))
+        raise ConfigurationError(
+            f"SARVAM_TTS_MODEL={model!r} is not supported. Choose one of: {allowed}"
+        )
+    low, high = config.pace_range
+    if not low <= settings.sarvam_tts_pace <= high:
+        raise ConfigurationError(
+            f"SARVAM_TTS_PACE={settings.sarvam_tts_pace} is outside {model}'s range {low}-{high}"
+        )
+    speaker = settings.sarvam_tts_speaker
+    if speaker and speaker not in get_speakers_for_model(model):
+        raise ConfigurationError(
+            f"SARVAM_TTS_SPEAKER={speaker!r} is not available for {model}. "
+            f"Choose one of: {', '.join(get_speakers_for_model(model))}"
+        )
+
+
+class OpenAICompatibleLLMService(OpenAILLMService):
+    """``OpenAILLMService`` for third-party endpoints that reject the ``developer`` role.
+
+    Pipecat's adapter rewrites ``developer`` messages to ``user`` when this is
+    False, which is what its own OpenRouter/Ollama services do.
+    """
+
+    supports_developer_role = False
+
+
+def build_llm(
+    settings: Settings, system_instruction: str, temperature: float | None = None
+) -> LLMService:
+    """Create the chat LLM service for the configured provider.
+
+    The system prompt is passed as the service's ``system_instruction`` rather
+    than as a message in the context, as recommended by Pipecat 1.x.
+    ``temperature`` ``None`` keeps the provider default.
+    """
+    if temperature is None:
+        temperature = settings.llm_temperature
+    if settings.llm_provider is LLMProvider.SARVAM:
+        return SarvamLLMService(
+            api_key=settings.sarvam_api_key.get_secret_value(),
+            settings=SarvamLLMService.Settings(
+                model=settings.llm_model,
+                system_instruction=system_instruction,
+                temperature=temperature,
+                reasoning_effort=settings.llm_reasoning_effort,
+            ),
+        )
+    assert settings.openai_api_key is not None  # enforced by Settings
+    service_class = (
+        OpenAILLMService if settings.openai_base_url is None else OpenAICompatibleLLMService
+    )
+    return service_class(
+        api_key=settings.openai_api_key.get_secret_value(),
+        base_url=settings.openai_base_url,
+        settings=OpenAILLMService.Settings(
+            model=settings.llm_model,
+            system_instruction=system_instruction,
+            temperature=temperature,
+        ),
+    )
+
+
+def validate_service_configuration(settings: Settings) -> None:
+    """Build every service once, offline, so bad models/speakers/prompts fail at startup.
+
+    Raises:
+        ConfigurationError: with a message naming the offending setting.
+    """
+    language = get_language(settings.agent_language)
+    try:
+        prompt = build_system_prompt(
+            settings.agent_name, language, override=settings.agent_system_prompt
+        )
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ConfigurationError(
+            f"AGENT_SYSTEM_PROMPT has an invalid placeholder: {exc}. "
+            "Only {agent_name}, {language_english_name} and {language_native_name} are allowed."
+        ) from exc
+    try:
+        build_stt(settings)
+        build_tts(settings)
+        build_llm(settings, prompt)
+    except ValueError as exc:  # pipecat rejects unknown models with ValueError
+        raise ConfigurationError(str(exc)) from exc
+
+
+def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
+    """Retrieval for the agent; ``None`` when disabled or the embedding key is missing."""
+    if not settings.knowledge_enabled or settings.openai_api_key is None:
+        return None
+    from voice_agent.knowledge.embeddings import OpenAIEmbedder
+    from voice_agent.knowledge.service import KnowledgeService
+    from voice_agent.knowledge.store import KnowledgeStore
+    from voice_agent.knowledge.translate import SarvamTranslator
+
+    embedder = OpenAIEmbedder(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.embedding_model,
+        dimensions=settings.embedding_dimensions,
+        base_url=settings.embedding_base_url,
+    )
+    store = KnowledgeStore(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+        collection=settings.qdrant_collection,
+        vector_size=embedder.dimensions,
+    )
+    return KnowledgeService(
+        pool=None,
+        store=store,
+        embedder=embedder,
+        translator=SarvamTranslator(
+            settings.sarvam_api_key.get_secret_value(), source_language=settings.agent_language
+        ),
+    )

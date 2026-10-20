@@ -1,0 +1,128 @@
+/* Design tokens, matched to the reference dashboard.
+ *
+ * Structure taken from the shot: a light grey page holding a white rounded app
+ * shell; a white sidebar with grouped micro-labelled nav; white cards with thin
+ * rules; uppercase letterspaced card labels over large tabular numbers; tinted
+ * status pills.
+ *
+ * Violet is the one brand hue and the single chart hue. It passes the palette
+ * validator against white on all five checks (L 0.43-0.77 band, chroma floor,
+ * contrast >= 3:1). Green and red are reserved for status and never used as
+ * series colours.
+ */
+
+:root {
+  /* --- Surfaces --- */
+  --page: #eff0f3;
+  --shell: #ffffff;
+  --surface: #ffffff;
+  --canvas: #fafafb;
+  --surface-sunken: #f5f5f7;
+  --surface-hover: #f9f9fb;
+
+  /* --- Rules --- */
+  --rule: #ececf0;
+  --rule-strong: #dededf;
+
+  /* --- Ink --- */
+  --ink: #18181b;
+  --ink-muted: #71717a;
+  --ink-faint: #a1a1aa;
+
+  /* --- Brand violet --- */
+  --violet: #6c4cf1;
+  --violet-hover: #5a3ade;
+  --violet-press: #4c2fc4;
+  --violet-soft: #d9d2fb;
+  --violet-pale: #f0edfe;
+  --violet-rule: #c9bffa;
+
+  /* --- Status. Reserved: never a series colour. --- */
+  --up: #16a34a;
+  --up-tint: #dcfce7;
+  --down: #dc2626;
+  --down-tint: #fee2e2;
+
+  --warn: #b45309;
+  --warn-tint: #fef3c7;
+  --info: #3b6fb5;
+  --info-tint: #e8f0fb;
+
+  /* --- Code surface. A dark panel inside the light app, so the generated
+     YAML reads as an editor rather than as page content. Its own scale,
+     because inverting the ink tokens on a near-black ground gives muddy
+     greys. --- */
+  --code-bg: #131318;
+  --code-chrome: #1b1b22;
+  --code-rule: #2a2a33;
+  --code-ink: #e7e7ea;
+  --code-ink-muted: #9b9ba6;
+  --code-ink-faint: #88889a;
+  --code-hover: #22222b;
+  --code-active: #2c2454;
+
+  /* Token colours. Violet for keys keeps the brand present; the rest are
+     chosen for contrast, every one at or above 4.5:1 against both --code-bg
+     and the slightly lighter --code-chrome. */
+  --code-key: #c3b2ff;
+  --code-string: #e3b38c;
+  --code-number: #a7d39c;
+  --code-atom: #79b8f3;
+  --code-comment: #9292a2;
+  --code-punct: #90909c;
+  --code-invalid: #ff8a8a;
+
+  /* --- Solid action (the shot's Export button) --- */
+  --solid: #18181b;
+  --solid-hover: #2a2a2e;
+
+  /* --- Type: Inter, as in the reference --- */
+  --sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* A reading serif for the assistant's answers. The one 'classic' move
+     that carries the Agent page: a reply set in serif reads as a written
+     answer rather than a chat bubble. System stack, so nothing to load. */
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Lifted one step across the board. The old scale bottomed out at 10px and
+     put most body copy at 12px, which is small for prose someone actually
+     reads -- cube descriptions, business context, agent answers. The steps are
+     kept distinct so the hierarchy is unchanged, only the floor is higher. */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-num: 28px;
+
+  /* --- Space --- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --s8: 48px;
+
+  /* --- Radii, as measured off the shot --- */
+  --r-sm: 6px;
+  --r: 8px;
+  --r-card: 12px;
+  --r-shell: 16px;
+
+  --rail-width: 260px;
+  /* Collapsed, the rail shows icons only. Sized so the 28px project glyph
+     fits its bordered box exactly -- 28 + 8px padding + 1px border each side,
+     plus the rail's own 12px padding. At 60px the glyph burst out of its box,
+     which is what made the collapsed rail look cramped. */
+  --rail-collapsed: 70px;
+
+  --shadow-shell: 0 1px 2px rgba(24, 24, 27, 0.04), 0 12px 40px rgba(24, 24, 27, 0.07);
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --shadow-pop: 0 4px 16px rgba(24, 24, 27, 0.1);
+
+  --ease: cubic-bezier(0.2, 0, 0.1, 1);
+}

@@ -1,0 +1,167 @@
+/* Console-specific additions on top of the Cube stylesheet. Only what the
+   transcript and latency views need; everything else reuses base.css. */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Transcript: a quiet two-column exchange, not chat bubbles. */
+.exchange {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 260px;
+  gap: var(--s4);
+  padding: var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+.exchange:last-child { border-bottom: none; }
+.exchange__n {
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  padding-top: 3px;
+}
+.exchange__lines { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.line { display: flex; gap: var(--s3); align-items: flex-start; }
+.line__who {
+  flex: none;
+  width: 64px;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  padding-top: 3px;
+}
+.line__text { font-size: var(--text-base); line-height: 1.55; white-space: pre-wrap; }
+.line--user .line__text { color: var(--ink-muted); }
+.line--bot .line__text { font-family: var(--serif); font-size: var(--text-md); }
+.line__text--empty { color: var(--ink-faint); font-style: italic; }
+
+/* Latency breakdown beside each exchange: stacked segments on one track. */
+.lat { display: flex; flex-direction: column; gap: 6px; }
+.lat__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); }
+.lat__total { font-size: var(--text-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.lat__track { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-sunken); }
+.lat__seg { height: 100%; min-width: 2px; }
+.lat__seg--wait { background: var(--rule-strong); }
+.lat__seg--stt { background: var(--violet-soft); }
+.lat__seg--llm { background: var(--violet); }
+.lat__seg--agg { background: var(--violet-rule); }
+.lat__seg--tts { background: var(--violet-press); }
+.lat__seg--out { background: var(--ink-faint); }
+.lat__seg--rest { background: var(--surface-sunken); border: 1px dashed var(--rule-strong); box-sizing: border-box; }
+.lat__legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: var(--text-2xs); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.lat__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+.row-link { cursor: pointer; }
+.row-link .btn svg { transform: rotate(-90deg); }
+
+/* Transcripts are Indic text; Inter has no Tamil/Devanagari glyphs, so give the
+   browser a shaped fallback before it reaches the system font. */
+.line__text, .cell-text {
+  font-family: var(--sans), 'Noto Sans Tamil', 'Noto Sans Devanagari', 'Noto Sans', sans-serif;
+}
+.line--bot .line__text {
+  font-family: var(--serif), 'Noto Serif Tamil', 'Noto Serif Devanagari', 'Noto Sans Tamil', serif;
+}
+
+.cell-link { color: inherit; text-decoration: none; font-weight: 500; }
+.cell-link:hover { color: var(--violet); }
+.cell-sub { display: block; font-size: var(--text-2xs); color: var(--ink-faint); margin-top: 1px; }
+
+.form-actions { display: flex; align-items: center; gap: var(--s3); margin-top: var(--s4); }
+.range { display: flex; align-items: center; gap: var(--s3); }
+.range__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.range__toggle input { accent-color: var(--violet); margin: 0; }
+.range input[type='range'] { flex: 1; accent-color: var(--violet); }
+.range__value { width: 48px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+
+@media (max-width: 900px) {
+  .exchange { grid-template-columns: 40px minmax(0, 1fr); }
+  .exchange .lat { grid-column: 2; }
+  .grid--main, .grid--split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Language picker: native script leads, English name and code underneath. */
+.lang-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.lang {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+}
+.lang:hover { background: var(--surface-hover); border-color: var(--rule-strong); }
+.lang.is-on { border-color: var(--violet); background: var(--violet-pale); box-shadow: 0 0 0 1px var(--violet); }
+.lang__native { font-size: var(--text-md); font-weight: 600; font-family: var(--sans), 'Noto Sans Tamil', 'Noto Sans Devanagari', 'Noto Sans', sans-serif; }
+.lang__name { font-size: var(--text-2xs); color: var(--ink-muted); }
+.lang__name .mono { color: var(--ink-faint); }
+
+.preview-prompt {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--ink-muted);
+}
+
+/* Geist Mono has no Indic glyphs; prompts may be written in Tamil etc. */
+.field__textarea, .preview-prompt {
+  font-family: var(--mono), 'Noto Sans Tamil', 'Noto Sans Devanagari', 'Noto Sans', monospace;
+}
+
+.lang-select {
+  max-width: 420px;
+  font-family: var(--sans), 'Noto Sans Tamil', 'Noto Sans Devanagari', 'Noto Sans', sans-serif;
+}
+
+/* Knowledge page */
+.dropzone.is-busy { opacity: 0.6; cursor: progress; }
+.hit { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--rule); display: flex; flex-direction: column; gap: 6px; }
+.hit:last-child { border-bottom: none; }
+.hit__head { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); }
+.hit__rank { font-size: var(--text-2xs); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.hit__source { font-weight: 500; }
+.hit__text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  font-family: var(--sans), 'Noto Sans Tamil', 'Noto Sans Devanagari', 'Noto Sans', sans-serif;
+}
+
+/* Knowledge searches shown under an exchange */
+.kb { margin-top: var(--s2); border: 1px solid var(--violet-rule); border-radius: var(--r); background: var(--violet-pale); overflow: hidden; }
+.kb__search + .kb__search { border-top: 1px solid var(--violet-rule); }
+.kb__head { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); font-size: var(--text-xs); color: var(--ink-muted); flex-wrap: wrap; }
+.kb__head svg { color: var(--violet); }
+.kb__q { font-family: var(--sans), 'Noto Sans Tamil', 'Noto Sans Devanagari', sans-serif; }
+.kb__meta { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kb__hit { border-top: 1px solid var(--violet-rule); background: var(--surface); }
+.kb__hit--skipped { opacity: 0.65; }
+.kb__row { width: 100%; display: flex; align-items: center; gap: var(--s2); padding: 6px var(--s3); background: none; border: none; text-align: left; font-size: var(--text-xs); cursor: pointer; color: inherit; }
+.kb__row:hover { background: var(--surface-hover); }
+.kb__source { font-weight: 500; }
+.kb__text { margin: 0; padding: 0 var(--s3) var(--s3); font-size: var(--text-xs); line-height: 1.55; color: var(--ink-muted); white-space: pre-wrap; }

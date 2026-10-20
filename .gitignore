@@ -1,0 +1,30 @@
+# ---- secrets: never commit real credentials ----
+backend/.env
+backend/.env.*
+!backend/.env.example
+*.pem
+*.key
+
+# ---- Python (backend/) ----
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- Node (frontend/) ----
+frontend/node_modules/
+frontend/dist/
+
+# ---- local tooling / editors ----
+.claude/settings.local.json
+.vscode/
+.idea/
+.DS_Store
+
+# ---- run-time artefacts ----
+*.log
+*.wav
+*.mp3
+recordings/

@@ -1,0 +1,51 @@
+services:
+  bot:
+    build: .
+    image: voice-agent:latest
+    container_name: voice-agent-bot
+    env_file: backend/.env
+    network_mode: host
+    # PUBLIC_HOST: the public hostname Plivo reaches the bot through (wss://<host>/ws).
+    # BOT_ARGS: extra runner flags, e.g. "--allowed-origins https://ops.example.com".
+    command: python bot.py --host 0.0.0.0 --port 7860 -t plivo --proxy ${PUBLIC_HOST:-localhost} ${BOT_ARGS:-}
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/status', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  portal:
+    image: voice-agent:latest
+    container_name: voice-agent-portal
+    depends_on:
+      bot:
+        condition: service_started
+    env_file: backend/.env
+    environment:
+      PORTAL_HOST: 0.0.0.0
+    network_mode: host
+    command: python portal.py
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/stats', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
