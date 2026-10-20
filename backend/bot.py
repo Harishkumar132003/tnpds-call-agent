@@ -6,6 +6,7 @@ Run ``python bot.py`` and open http://localhost:7860/client in a browser.
 from __future__ import annotations
 
 import os
+import sys
 
 from loguru import logger
 from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
@@ -87,6 +88,21 @@ async def _close_client_connection(runner_args: RunnerArguments) -> None:
         await connection.disconnect()
 
 
+def runner_args_from_settings(argv: list[str], settings: Settings) -> list[str]:
+    """Fill in ``--proxy`` / ``-t`` from PUBLIC_HOST / BOT_TRANSPORT when not given on the CLI.
+
+    Explicit flags always win, so ``python bot.py -t webrtc`` still works locally
+    while the deployed container needs nothing but the .env file.
+    """
+    args = list(argv)
+    if settings.public_host and "--proxy" not in args and "-x" not in args:
+        host = settings.public_host.removeprefix("https://").removeprefix("http://").strip("/")
+        args += ["--proxy", host]
+    if settings.bot_transport and "-t" not in args and "--transport" not in args:
+        args += ["-t", settings.bot_transport]
+    return args
+
+
 def _drop_blank_env_vars() -> None:
     """The runner exports every ``.env`` line, so ``OPENAI_BASE_URL=`` becomes an empty
     environment variable that SDKs then treat as a real (broken) base URL."""
@@ -118,6 +134,7 @@ def main() -> None:
         logger.error("Copy .env.example to .env and fill in the missing values.")
         raise SystemExit(1) from exc
     configure_logging(_settings.log_level, secrets=_secret_values(_settings))
+    sys.argv[1:] = runner_args_from_settings(sys.argv[1:], _settings)
     run_pipecat()
 
 

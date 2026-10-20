@@ -223,27 +223,64 @@ tracking is disabled for that process and the agent keeps running.
 
 ## Deploy with Docker Compose
 
-Postgres and Qdrant are expected to be already running on the server; the
-compose file only runs the bot and the portal, from one shared image.
+Postgres, Qdrant and the `dev-nginx` reverse proxy already run on the server;
+the compose file only adds the bot and the portal, from one shared image, on
+the same `shared-app-network` as nginx. Nothing is published on host ports:
+nginx reaches the containers by name.
 
 ```bash
-cp backend/.env.example backend/.env       # fill in keys; DATABASE_URL/QDRANT_URL point at localhost
-docker compose build                        # multi-stage: node builds the UI, uv installs locked deps, python:slim runtime
-PUBLIC_HOST=calls.example.com docker compose up -d
-docker compose logs -f bot                  # transcripts, latency and knowledge-search steps
+cp backend/.env.docker.example backend/.env.docker   # container-side hostnames (Postgres by name, Qdrant via host gateway)
+docker compose build                                  # multi-stage: node builds the UI, uv installs locked deps, python:slim runtime
+docker compose up -d
+docker compose logs -f bot                            # transcripts, latency and knowledge-search steps
 ```
 
-- Both services use the host network, so `localhost` in `.env` still reaches
-  Postgres and Qdrant, WebRTC/ICE works without TURN, and Plivo's websocket
-  lands on port 7860. The portal listens on 8090 (`PORTAL_HOST=0.0.0.0` is set
-  by compose); put a reverse proxy or firewall in front of both.
-- `PUBLIC_HOST` is the hostname Plivo reaches the bot through
-  (`wss://<host>/ws`). `BOT_ARGS` passes extra runner flags such as
-  `--allowed-origins https://ops.example.com`.
+nginx server blocks (in `newserver/sites/local-apps.conf`, TLS at Cloudflare):
+
+```nginx
+server {
+    listen 80;
+    server_name callagent.wizzgeeks.com;
+    location / {
+        proxy_pass http://voice-agent-bot:7860;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+server {
+    listen 80;
+    server_name agentportal.wizzgeeks.com;
+    location / {
+        proxy_pass http://voice-agent-portal:8090;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # the portal has no login: protect it with Cloudflare Access or basic auth
+    }
+}
+```
+
+- `backend/.env` keeps the secrets (shared with local runs); `backend/.env.docker`
+  overrides only `DATABASE_URL`, `QDRANT_URL` and `PORTAL_HOST` for the container
+  network. Both are git-ignored and never baked into the image.
+- `PUBLIC_HOST` (in `backend/.env.docker`) is the hostname Plivo reaches the
+  bot through (`wss://<host>/ws`) and `BOT_TRANSPORT=plivo` starts the runner
+  in phone mode; the bot turns them into the runner's `--proxy` and `-t` flags
+  when those are not given on the command line. Set the Plivo application's
+  Answer URL to `https://<PUBLIC_HOST>/`. `BOT_ARGS` passes extra runner flags
+  such as `--allowed-origins`.
+- Phone calls (websocket through nginx) work in this bridge-network setup.
+  The bot's built-in WebRTC test page does not, because browsers cannot reach
+  container IPs for media; use the web client against a local `uv run python bot.py`
+  for development instead.
 - The image is built from the lock file with no dev dependencies, runs as a
-  non-root user, and never contains `.env`. Secrets come from `env_file` at
-  run time. Health checks hit `/status` and `/api/stats`; log rotation is on.
-- To rebuild after a code change: `docker compose build && docker compose up -d`.
+  non-root user, and strips bundled test suites. Health checks hit `/status`
+  and `/api/stats`; log rotation is on.
 
 ## Knowledge base (documents in Qdrant)
 

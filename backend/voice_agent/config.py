@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
 
+    # Deployment: how the bot is reached from outside (used when the CLI flags are absent)
+    public_host: str | None = None
+    """Public hostname Plivo connects to (wss://<host>/ws); becomes the runner's --proxy."""
+    bot_transport: str | None = None
+    """Runner transport to start with, e.g. "plivo"; becomes the runner's -t flag."""
+
     # Plivo telephony (optional; also read directly by the Pipecat runner)
     plivo_auth_id: str | None = None
     plivo_auth_token: SecretStr | None = None

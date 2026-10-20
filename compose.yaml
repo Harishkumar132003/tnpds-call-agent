@@ -1,14 +1,43 @@
+# Deploys the voice agent and the portal next to the Postgres, Qdrant and nginx
+# that already run on this server. Both services join the external
+# `shared-app-network` (the one dev-nginx is on), so nginx proxies to them by
+# container name:
+#     callagent.wizzgeeks.com   -> http://voice-agent-bot:7860
+#     agentportal.wizzgeeks.com -> http://voice-agent-portal:8090
+# No ports are published on the host; nginx is the only way in.
+#
+#   cp backend/.env.docker.example backend/.env.docker   # container-side hostnames + PUBLIC_HOST
+#   docker compose build
+#   docker compose up -d
+#
+# backend/.env holds the secrets (shared with local runs); backend/.env.docker
+# overrides only the URLs that must point at container names instead of
+# localhost. Neither file is baked into the image.
+
+x-common: &common
+  image: voice-agent:latest
+  env_file:
+    - backend/.env
+    - backend/.env.docker
+  networks:
+    - shared-app-network
+  extra_hosts:
+    # lets a container reach services published on the host (e.g. Qdrant on :6333)
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
 services:
   bot:
+    <<: *common
     build: .
-    image: voice-agent:latest
     container_name: voice-agent-bot
-    env_file: backend/.env
-    network_mode: host
-    # PUBLIC_HOST: the public hostname Plivo reaches the bot through (wss://<host>/ws).
-    # BOT_ARGS: extra runner flags, e.g. "--allowed-origins https://ops.example.com".
-    command: python bot.py --host 0.0.0.0 --port 7860 -t plivo --proxy ${PUBLIC_HOST:-localhost} ${BOT_ARGS:-}
-    restart: unless-stopped
+    # PUBLIC_HOST and BOT_TRANSPORT come from backend/.env.docker (the bot turns
+    # them into --proxy and -t). BOT_ARGS adds extra runner flags if ever needed,
+    # e.g. "--allowed-origins https://agentportal.wizzgeeks.com".
+    command: python bot.py --host 0.0.0.0 --port 7860 ${BOT_ARGS:-}
     stop_grace_period: 20s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/status', timeout=3)"]
@@ -20,22 +49,17 @@ services:
       resources:
         limits:
           memory: 2g
-    logging:
-      driver: json-file
-      options: { max-size: "20m", max-file: "5" }
 
   portal:
-    image: voice-agent:latest
+    <<: *common
     container_name: voice-agent-portal
     depends_on:
       bot:
         condition: service_started
-    env_file: backend/.env
     environment:
       PORTAL_HOST: 0.0.0.0
-    network_mode: host
+      PORTAL_PORT: 8090
     command: python portal.py
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/stats', timeout=3)"]
       interval: 30s
@@ -46,6 +70,7 @@ services:
       resources:
         limits:
           memory: 1g
-    logging:
-      driver: json-file
-      options: { max-size: "20m", max-file: "5" }
+
+networks:
+  shared-app-network:
+    external: true

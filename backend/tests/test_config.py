@@ -83,3 +83,19 @@ def test_invalid_stt_mode_rejected(make_settings):
 def test_idle_timeout_must_be_positive(make_settings):
     with pytest.raises(ValidationError):
         make_settings(session_idle_timeout_secs=0)
+
+
+def test_runner_args_from_settings(make_settings):
+    from bot import runner_args_from_settings
+
+    s = make_settings(public_host="https://callagent.wizzgeeks.com/", bot_transport="plivo")
+    assert runner_args_from_settings([], s) == ["--proxy", "callagent.wizzgeeks.com", "-t", "plivo"]
+    # explicit flags win
+    assert runner_args_from_settings(["-t", "webrtc", "--proxy", "x"], s) == [
+        "-t",
+        "webrtc",
+        "--proxy",
+        "x",
+    ]
+    # nothing configured: argv untouched
+    assert runner_args_from_settings(["--port", "7870"], make_settings()) == ["--port", "7870"]
