@@ -40,11 +40,55 @@ def build_stt(settings: Settings) -> SarvamSTTService:
     )
 
 
-def build_tts(settings: Settings, sample_rate: int | None = None) -> SarvamTTSService:
+class SarvamTTSWithDictionary(SarvamTTSService):
+    """SarvamTTSService plus a pronunciation dictionary (``dict_id`` in the websocket config).
+
+    Pipecat 1.12 builds the config message without ``dict_id``; this keeps its
+    payload and adds the one field. Revisit when upstream exposes it.
+    """
+
+    def __init__(self, *, dict_id: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.dict_id = dict_id
+
+    def _config_data(self) -> dict:
+        data = {
+            "target_language_code": self._settings.language,
+            "speaker": self._settings.voice,
+            "speech_sample_rate": self._speech_sample_rate,
+            "enable_preprocessing": self._settings.enable_preprocessing,
+            "min_buffer_size": self._settings.min_buffer_size,
+            "max_chunk_length": self._settings.max_chunk_length,
+            "output_audio_codec": self._output_audio_codec,
+            "output_audio_bitrate": self._output_audio_bitrate,
+            "pace": self._settings.pace,
+            "model": self._settings.model,
+        }
+        for key in ("pitch", "loudness", "temperature"):
+            value = getattr(self._settings, key)
+            if value is not None:
+                data[key] = value
+        if self.dict_id:
+            data["dict_id"] = self.dict_id
+        return data
+
+    async def _send_config(self) -> None:
+        if not self._websocket:
+            raise Exception("WebSocket not connected")
+        import json
+
+        config = self._config_data()
+        await self._websocket.send(json.dumps({"type": "config", "data": config}))
+
+
+def build_tts(
+    settings: Settings, sample_rate: int | None = None, dict_id: str | None = None
+) -> SarvamTTSService:
     """Create the streaming Sarvam text-to-speech service.
 
     ``sample_rate`` lets telephony sessions ask Sarvam for 8 kHz directly
-    instead of synthesising at 24 kHz and downsampling.
+    instead of synthesising at 24 kHz and downsampling. ``dict_id`` applies a
+    Sarvam pronunciation dictionary (see :mod:`voice_agent.pronunciation`).
     """
     language = get_language(settings.agent_language)
     _validate_tts_options(settings)
@@ -55,10 +99,11 @@ def build_tts(settings: Settings, sample_rate: int | None = None) -> SarvamTTSSe
     )
     if settings.sarvam_tts_speaker:
         tts_settings.voice = settings.sarvam_tts_speaker
-    return SarvamTTSService(
+    return SarvamTTSWithDictionary(
         api_key=settings.sarvam_api_key.get_secret_value(),
         sample_rate=sample_rate,
         settings=tts_settings,
+        dict_id=dict_id,
     )
 
 
@@ -182,4 +227,7 @@ def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
         translator=SarvamTranslator(
             settings.sarvam_api_key.get_secret_value(), source_language=settings.agent_language
         ),
+        chunk_chars=settings.knowledge_chunk_chars,
+        chunk_overlap=settings.knowledge_chunk_overlap,
+        whole_document=settings.knowledge_whole_document,
     )

@@ -82,6 +82,7 @@ class FakeEmbedder:
 
 class FakeStore:
     collection = "test"
+    url = "http://fake-qdrant:6333"
 
     def __init__(self):
         self.points: dict[str, list] = {}
@@ -162,16 +163,12 @@ def test_hit_is_json_serialisable():
     assert set(hit.__dict__) == {"score", "text", "document_id", "document_name", "chunk_index"}
 
 
-def test_needs_translation_and_script_detection():
-    from voice_agent.knowledge.translate import detect_language_code, needs_translation
+def test_needs_translation_skips_english():
+    from voice_agent.knowledge.translate import needs_translation
 
     assert needs_translation("ரேஷன் கார்டு புதுப்பிக்க என்ன தேவை?")
     assert not needs_translation("Is Aadhaar required for a new smart card?")
     assert not needs_translation("TNPDS 1967")  # digits only: nothing to translate
-    assert detect_language_code("ரேஷன் கார்டு") == "ta-IN"
-    assert detect_language_code("राशन कार्ड") == "hi-IN"
-    assert detect_language_code("రేషన్ కార్డు") == "te-IN"
-    assert detect_language_code("plain english", default="en-IN") == "en-IN"
 
 
 class FakeTranslator:
@@ -244,3 +241,49 @@ async def test_knowledge_tool_notifies_listeners_with_chunks():
     assert record.question == "Is Aadhaar needed?"
     assert record.hits[0]["source"] == "faq.pdf" and record.hits[0]["used"] is True
     assert set(record.as_dict()) >= {"question", "translated_query", "hits", "embed_ms", "at"}
+
+
+async def test_tool_failure_names_the_qdrant_url():
+    from unittest.mock import Mock
+
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    class BrokenStore(FakeStore):
+        url = "http://qdrant:6333"
+
+        async def search(self, *a, **k):
+            raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    service = KnowledgeService(pool=None, store=BrokenStore(), embedder=FakeEmbedder())
+    tool = KnowledgeTool(service)
+    records, results = [], []
+    tool.on_search(records.append)
+    await tool.handle(
+        Mock(
+            arguments={"question": "q"},
+            result_callback=AsyncMock(side_effect=lambda r: results.append(r)),
+        )
+    )
+    assert "qdrant=http://qdrant:6333" in records[0].error
+    assert results[0] == {"found": False, "reason": "search unavailable"}
+
+
+def test_whole_document_mode_keeps_one_chunk_until_too_long():
+    from voice_agent.knowledge.chunk import WHOLE_DOCUMENT_MAX_CHARS
+
+    text = "\n\n".join(f"Step {i}: " + "detail " * 50 for i in range(8))  # ~2.5k chars
+    [chunk] = chunk_text(text, whole_document=True)
+    assert chunk.text.startswith("Step 0") and "Step 7" in chunk.text
+    huge = "para " * (WHOLE_DOCUMENT_MAX_CHARS // 4)
+    assert len(chunk_text(huge, max_chars=1200, overlap=200, whole_document=True)) > 1
+    assert chunk_text("   ", whole_document=True) == []
+
+
+async def test_service_whole_document_ingest_is_one_chunk():
+    pool, store, embedder = FakePool(), FakeStore(), FakeEmbedder()
+    service = KnowledgeService(pool=pool, store=store, embedder=embedder, whole_document=True)
+    text = "\n\n".join(
+        f"Fact {i}: " + "detail " * 60 for i in range(6)
+    )  # would be 3+ chunks otherwise
+    result = await service.ingest("sheet.txt", text.encode(), "text/plain")
+    assert result.chunk_count == 1

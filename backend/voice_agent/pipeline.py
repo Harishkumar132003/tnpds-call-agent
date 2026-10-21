@@ -14,12 +14,12 @@ assistant aggregator)::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
+from pipecat.frames.frames import EndFrame, LLMRunFrame, TTSSpeakFrame
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnusablePolicy
@@ -37,6 +37,8 @@ from pipecat.transports.base_transport import BaseTransport
 from voice_agent.config import Settings
 from voice_agent.knowledge.tool import PROMPT_ADDITION, TOOL_NAME, KnowledgeTool, searching_line
 from voice_agent.languages import get_language
+from voice_agent.phrases import idle_check_line as default_idle_check_line
+from voice_agent.phrases import idle_goodbye_line as default_idle_goodbye_line
 from voice_agent.prompts import build_system_prompt
 from voice_agent.services import build_llm, build_stt, build_tts
 from voice_agent.transports import WEB_AUDIO_RATES, AudioRates
@@ -51,6 +53,8 @@ class VoicePipeline:
     context: LLMContext
     user_aggregator: LLMUserAggregator
     assistant_aggregator: LLMAssistantAggregator
+    state: dict[str, str] = field(default_factory=dict)
+    """Mutable session facts set by handlers, e.g. ``end_reason``."""
 
 
 def build_voice_pipeline(
@@ -63,6 +67,11 @@ def build_voice_pipeline(
     greeting: str | None = None,
     observers: list[BaseObserver] | None = None,
     knowledge: KnowledgeTool | None = None,
+    idle_prompt_secs: float | None = None,
+    idle_check_line: str | None = None,
+    idle_goodbye_line: str | None = None,
+    knowledge_prompt: str | None = None,
+    tts_dict_id: str | None = None,
 ) -> VoicePipeline:
     """Wire the Sarvam STT/TTS services, the LLM and the transport into a worker.
 
@@ -72,6 +81,7 @@ def build_voice_pipeline(
     skipping the LLM for the opening line; without one the LLM greets.
     """
     language = get_language(settings.agent_language)
+    idle_secs = settings.idle_prompt_secs if idle_prompt_secs is None else idle_prompt_secs
     system_prompt = (
         build_system_prompt(
             settings.agent_name,
@@ -81,9 +91,9 @@ def build_voice_pipeline(
         + _current_time_note()
     )
     if knowledge is not None:
-        system_prompt += PROMPT_ADDITION
+        system_prompt += "\n\n" + (knowledge_prompt or PROMPT_ADDITION).strip() + "\n"
     stt = build_stt(settings)
-    tts = build_tts(settings, sample_rate=audio_rates.output_hz)
+    tts = build_tts(settings, sample_rate=audio_rates.output_hz, dict_id=tts_dict_id)
     llm = build_llm(settings, system_prompt, temperature=temperature)
 
     context = LLMContext(tools=knowledge.schema()) if knowledge is not None else LLMContext()
@@ -93,7 +103,12 @@ def build_voice_pipeline(
         context,
         # Local Silero VAD drives turn start (and barge-in interruptions); the
         # default stop strategy (bundled Smart Turn v3) decides end of turn.
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=SileroVADAnalyzer(),
+            # Fires on_user_turn_idle when the caller stays silent after the agent
+            # finishes speaking (see _register_idle_handling).
+            user_idle_timeout=idle_secs,
+        ),
     )
 
     pipeline = Pipeline(
@@ -128,12 +143,26 @@ def build_voice_pipeline(
     _log_service_connection_events(tts, "Sarvam TTS")
     _log_conversation_turns(aggregators.user(), aggregators.assistant())
     _register_transport_handlers(transport, worker, context, greeting=greeting)
+    state: dict[str, str] = {}
+    if idle_secs > 0:
+        _register_idle_handling(
+            aggregators.user(),
+            worker,
+            state,
+            check_line=idle_check_line
+            or settings.idle_check_line
+            or default_idle_check_line(language.code),
+            goodbye_line=idle_goodbye_line
+            or settings.idle_goodbye_line
+            or default_idle_goodbye_line(language.code),
+        )
     return VoicePipeline(
         worker=worker,
         pipeline=pipeline,
         context=context,
         user_aggregator=aggregators.user(),
         assistant_aggregator=aggregators.assistant(),
+        state=state,
     )
 
 
@@ -153,6 +182,42 @@ def _current_time_note() -> str:
     """Appended to the prompt so the model never guesses today's date."""
     now = datetime.now().astimezone()
     return f"\n\nCurrent date and time: {now.strftime('%A, %d %B %Y, %H:%M %Z')}.\n"
+
+
+def _register_idle_handling(
+    user: LLMUserAggregator,
+    worker: PipelineWorker,
+    state: dict[str, str],
+    *,
+    check_line: str,
+    goodbye_line: str,
+) -> None:
+    """Silence after the agent speaks: ask once, then say goodbye and end the call.
+
+    The aggregator's idle timer starts each time the agent stops speaking and is
+    cancelled when the caller speaks, so the check line itself restarts the
+    countdown; a second timeout means the caller never replied.
+    """
+    idle_strikes = 0
+
+    @user.event_handler("on_user_turn_started")
+    async def on_user_turn_started(_aggregator: object, *_: object) -> None:
+        nonlocal idle_strikes
+        idle_strikes = 0
+
+    @user.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(_aggregator: object) -> None:
+        nonlocal idle_strikes
+        idle_strikes += 1
+        if idle_strikes == 1:
+            logger.info("Caller idle; asking once whether they are still there")
+            await worker.queue_frames([TTSSpeakFrame(check_line)])
+            return
+        logger.info("Caller still idle after the check; saying goodbye and ending the call")
+        state["end_reason"] = "idle_timeout"
+        # EndFrame is a control frame: the goodbye finishes playing before the
+        # pipeline shuts down (and, on Plivo, hangs up the call).
+        await worker.queue_frames([TTSSpeakFrame(goodbye_line), EndFrame()])
 
 
 def _register_transport_handlers(

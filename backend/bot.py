@@ -14,7 +14,7 @@ from pipecat.runner.utils import create_transport
 
 from voice_agent.config import ConfigurationError, Settings, load_settings
 from voice_agent.logging_config import configure_logging
-from voice_agent.services import validate_service_configuration
+from voice_agent.services import build_knowledge_service, validate_service_configuration
 from voice_agent.session import run_voice_session
 from voice_agent.tracking.recorder import CallInfo
 from voice_agent.transports import TRANSPORT_PARAMS, audio_rates_for
@@ -103,6 +103,27 @@ def runner_args_from_settings(argv: list[str], settings: Settings) -> list[str]:
     return args
 
 
+def _warn_if_knowledge_unreachable(settings: Settings) -> None:
+    """Say so at start-up when Qdrant cannot be reached, instead of per failed search."""
+    service = build_knowledge_service(settings)
+    if service is None:
+        logger.info("Knowledge base off (KNOWLEDGE_ENABLED=false or no OPENAI_API_KEY)")
+        return
+    import asyncio
+
+    try:
+        reachable = asyncio.run(asyncio.wait_for(service.ping(), timeout=3))
+    except Exception:
+        reachable = False
+    if reachable:
+        logger.info(f"Knowledge base on: Qdrant at {service.qdrant_url}")
+    else:
+        logger.warning(
+            f"Knowledge base: Qdrant is NOT reachable at {service.qdrant_url}; searches will "
+            "fail until QDRANT_URL points at a reachable host (localhost outside docker)"
+        )
+
+
 def _drop_blank_env_vars() -> None:
     """The runner exports every ``.env`` line, so ``OPENAI_BASE_URL=`` becomes an empty
     environment variable that SDKs then treat as a real (broken) base URL."""
@@ -112,7 +133,11 @@ def _drop_blank_env_vars() -> None:
 
 def _secret_values(settings: Settings) -> list[str]:
     secrets = [settings.sarvam_api_key.get_secret_value()]
-    for secret in (settings.openai_api_key, settings.plivo_auth_token):
+    for secret in (
+        settings.openai_api_key,
+        settings.plivo_auth_token,
+        settings.langfuse_secret_key,
+    ):
         if secret is not None:
             secrets.append(secret.get_secret_value())
     return secrets
@@ -134,6 +159,7 @@ def main() -> None:
         logger.error("Copy .env.example to .env and fill in the missing values.")
         raise SystemExit(1) from exc
     configure_logging(_settings.log_level, secrets=_secret_values(_settings))
+    _warn_if_knowledge_unreachable(_settings)
     sys.argv[1:] = runner_args_from_settings(sys.argv[1:], _settings)
     run_pipecat()
 

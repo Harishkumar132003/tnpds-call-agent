@@ -50,6 +50,7 @@ class KnowledgeService:
         translator: Translator | None = None,
         chunk_chars: int = 1200,
         chunk_overlap: int = 200,
+        whole_document: bool = False,
     ) -> None:
         self._pool = pool
         self._store = store
@@ -57,6 +58,15 @@ class KnowledgeService:
         self._translator = translator
         self._chunk_chars = chunk_chars
         self._chunk_overlap = chunk_overlap
+        self._whole_document = whole_document
+
+    @property
+    def qdrant_url(self) -> str:
+        return self._store.url
+
+    async def ping(self) -> bool:
+        """True when Qdrant answers; used for start-up warnings."""
+        return await self._store.ping()
 
     async def ingest(self, filename: str, data: bytes, media_type: str | None) -> IngestResult:
         """Extract, chunk, embed and store one file; records progress in ``documents``."""
@@ -64,7 +74,12 @@ class KnowledgeService:
             raise RuntimeError("ingest needs the documents database")
         started = time.monotonic()
         text = extract_text(filename, data)
-        chunks = chunk_text(text, max_chars=self._chunk_chars, overlap=self._chunk_overlap)
+        chunks = chunk_text(
+            text,
+            max_chars=self._chunk_chars,
+            overlap=self._chunk_overlap,
+            whole_document=self._whole_document,
+        )
         if not chunks:
             raise EmptyDocumentError(f"No text could be extracted from {filename!r}")
         document_id = str(uuid.uuid4())

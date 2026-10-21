@@ -51,6 +51,10 @@ class TurnRecord:
     """Pipecat's non-overlapping parts of the latency interval, in order."""
     searches: list[dict[str, object]] = field(default_factory=list)
     """Knowledge-base searches made while answering this turn, with retrieved chunks."""
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    tts_characters: int | None = None
+    stt_audio_seconds: float | None = None
 
 
 @dataclass
@@ -76,12 +80,13 @@ class CallRecorder:
         pool: asyncpg.Pool,
         call: CallInfo,
         *,
+        call_id: uuid.UUID | None = None,
         max_queue: int = 500,
         flush_timeout: float = 5.0,
     ) -> None:
         self._pool = pool
         self.call = call
-        self.id = uuid.uuid4()
+        self.id = call_id or uuid.uuid4()
         self.started_at = datetime.now(UTC)
         self._queue: asyncio.Queue[WriteOp] = asyncio.Queue(maxsize=max_queue)
         self._writer: asyncio.Task | None = None
@@ -159,9 +164,10 @@ class CallRecorder:
         await conn.execute(
             "insert into turns (call_id, turn_index, user_text, assistant_text, user_spoke_at, "
             "bot_spoke_at, completed_at, response_latency_ms, turn_release_ms, stt_ttfb_ms, "
-            "llm_ttfb_ms, tts_ttfb_ms, interrupted, contributions, searches) "
+            "llm_ttfb_ms, tts_ttfb_ms, interrupted, contributions, searches, "
+            "prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds) "
             "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, "
-            "$15::jsonb) "
+            "$15::jsonb, $16, $17, $18, $19) "
             "on conflict (call_id, turn_index) do nothing",
             self.id,
             t.turn_index,
@@ -178,6 +184,10 @@ class CallRecorder:
             t.interrupted,
             json.dumps(t.contributions),
             json.dumps(t.searches),
+            t.prompt_tokens,
+            t.completion_tokens,
+            t.tts_characters,
+            t.stt_audio_seconds,
         )
 
     async def _finish_call(self, conn: asyncpg.Connection, ended_at: datetime, reason: str) -> None:

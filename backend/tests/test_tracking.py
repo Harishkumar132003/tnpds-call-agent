@@ -292,3 +292,141 @@ async def test_tracker_keeps_searches_with_the_turn():
         searches[0]["translated_query"] == "q in english"
         and searches[0]["hits"][0]["source"] == "a.pdf"
     )
+
+
+async def test_usage_observer_attributes_tokens_to_the_turn():
+    from pipecat.frames.frames import MetricsFrame
+    from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData, TTSUsageMetricsData
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    pool = FakePool()
+    recorder = CallRecorder(pool, CALL)
+    recorder.start()
+    observer, user, assistant = Events(), Events(), Events()
+    tracker = ConversationTracker(recorder, observer)
+    tracker.attach(user, assistant)  # type: ignore[arg-type]
+    usage = tracker.usage_observer()
+    frame = MetricsFrame(
+        data=[
+            LLMUsageMetricsData(
+                processor="llm",
+                model="m",
+                value=LLMTokenUsage(prompt_tokens=120, completion_tokens=30, total_tokens=150),
+            ),
+            TTSUsageMetricsData(processor="tts", model="t", value=48),
+        ]
+    )
+    push = FramePushed(
+        source=None, destination=None, frame=frame, direction=FrameDirection.DOWNSTREAM, timestamp=0
+    )  # type: ignore[arg-type]
+    for _ in range(4):  # the same frame is seen at every hop downstream of its source
+        await usage.on_push_frame(push)
+    await assistant.fire(
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="hi", interrupted=False, timestamp="t"),
+    )
+    await recorder.close("completed")
+    [turn] = [a for sql, a in pool.statements if sql.startswith("insert into turns")]
+    assert (turn[15], turn[16], turn[17]) == (120, 30, 48)
+
+
+class FakeLangfuse:
+    """Records the v2 SDK calls the exporter makes."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+        self.flushed = False
+
+    def trace(self, **kw):
+        self.calls.append(("trace", kw))
+        return self
+
+    def span(self, **kw):
+        self.calls.append(("span", kw))
+        return self
+
+    def generation(self, **kw):
+        self.calls.append(("generation", kw))
+        return self
+
+    def update(self, **kw):
+        self.calls.append(("update", kw))
+
+    def flush(self):
+        self.flushed = True
+
+
+async def test_langfuse_exporter_builds_trace_with_usage(make_settings):
+    import uuid
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    call_id = uuid.uuid4()
+    exporter = LangfuseExporter(settings, CALL, call_id, client=fake)
+    exporter.start()
+    exporter.turn_completed(
+        TurnRecord(
+            turn_index=1,
+            user_text="q",
+            assistant_text="a",
+            response_latency_ms=900,
+            prompt_tokens=100,
+            completion_tokens=20,
+            tts_characters=40,
+            stt_audio_seconds=2.5,
+            searches=[{"question": "q", "hits": [{"source": "d", "used": True}]}],
+        )
+    )
+    await exporter.close("completed")
+    kinds = [k for k, _ in fake.calls]
+    assert kinds == ["trace", "span", "generation", "span", "generation", "generation", "update"]
+    assert fake.calls[0][1]["id"] == str(call_id)
+    llm = next(kw for k, kw in fake.calls if k == "generation" and kw["name"].endswith("llm"))
+    assert (
+        llm["usage"] == {"input": 100, "output": 20, "total": 120, "unit": "TOKENS"}
+        and llm["model"] == "sarvam-105b"
+    )
+    assert fake.flushed
+
+
+async def test_multiple_user_messages_before_a_reply_are_kept_together():
+    pool = FakePool()
+    recorder = CallRecorder(pool, CALL)
+    recorder.start()
+    observer, user, assistant = Events(), Events(), Events()
+    ConversationTracker(recorder, observer).attach(user, assistant)  # type: ignore[arg-type]
+    for part in ("I got married ten days ago.", "I need a new card.", "How do I remove my name?"):
+        await user.fire(
+            "on_user_turn_message_added", UserTurnMessageAddedMessage(content=part, timestamp="t")
+        )
+    await assistant.fire(
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="Sure.", interrupted=False, timestamp="t"),
+    )
+    await recorder.close("completed")
+    [turn] = [a for sql, a in pool.statements if sql.startswith("insert into turns")]
+    assert turn[2] == "I got married ten days ago. I need a new card. How do I remove my name?"
+
+
+async def test_langfuse_exporter_skips_llm_generation_for_fixed_lines(make_settings):
+    import uuid
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    exporter = LangfuseExporter(settings, CALL, uuid.uuid4(), client=fake)
+    exporter.start()
+    exporter.turn_completed(
+        TurnRecord(turn_index=1, assistant_text="still there?", tts_characters=12)
+    )
+    await exporter.close("idle_timeout")
+    names = [kw.get("name") for k, kw in fake.calls if k == "generation"]
+    assert names == ["turn 1 tts"]

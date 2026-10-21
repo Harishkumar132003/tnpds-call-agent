@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     public_host: str | None = None
     """Public hostname Plivo connects to (wss://<host>/ws); becomes the runner's --proxy."""
     bot_transport: str | None = None
+    """Restrict the runner to one transport (``plivo``, ``webrtc``). Unset = all at once."""
+    bot_public_url: str = "http://localhost:7860"
+    """Where a browser reaches the bot for test calls (the portal's Test call page)."""
     """Runner transport to start with, e.g. "plivo"; becomes the runner's -t flag."""
 
     # Plivo telephony (optional; also read directly by the Pipecat runner)
@@ -73,6 +76,13 @@ class Settings(BaseSettings):
     """Bind address for the portal; 0.0.0.0 inside containers / behind a proxy."""
     portal_port: int = 8090
 
+    # Langfuse (optional): one trace per call with per-turn usage, for cost and evaluation.
+    langfuse_enabled: bool = False
+    """Master switch: LANGFUSE_ENABLED=false stops sending traces without removing the keys."""
+    langfuse_host: str | None = None
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+
     # Knowledge base (portal uploads). Embeddings use OPENAI_API_KEY.
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
@@ -82,8 +92,21 @@ class Settings(BaseSettings):
     embedding_base_url: str | None = None
     knowledge_enabled: bool = True
     """Let the agent search uploaded documents (needs OPENAI_API_KEY and Qdrant)."""
+    knowledge_whole_document: bool = True
+    """Index each uploaded document as one chunk (one FAQ sheet = one topic)."""
+    knowledge_top_k: int = Field(default=1, ge=1, le=10)
+    """How many chunks a call's search hands to the LLM."""
     knowledge_chunk_chars: int = Field(default=1200, gt=100)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)
+
+    # Idle handling: after the agent finishes speaking and the caller stays silent for
+    # IDLE_PROMPT_SECS, ask once whether they are still there; if silence continues for
+    # the same period, say goodbye and end the call. 0 disables.
+    idle_prompt_secs: float = Field(default=10.0, ge=0)
+    idle_check_line: str | None = None
+    """Override for the "are you still there?" line (default is per language)."""
+    idle_goodbye_line: str | None = None
+    """Override for the closing line spoken before hanging up (default is per language)."""
 
     # Runtime
     log_level: str = "INFO"

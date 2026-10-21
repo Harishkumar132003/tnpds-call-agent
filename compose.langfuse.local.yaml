@@ -1,0 +1,6 @@
+# Local-only overlay: publish Langfuse on http://localhost:3100.
+#   docker compose -f compose.langfuse.yaml -f compose.langfuse.local.yaml up -d
+services:
+  langfuse-web:
+    ports:
+      - "3100:7310"

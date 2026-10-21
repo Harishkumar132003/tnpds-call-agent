@@ -1,0 +1,33 @@
+name: langfuse
+
+# Langfuse v2 (cost tracking + evaluation) as one container on shared-app-network.
+# Data lives in a `langfuse` database on the existing Postgres. No host port is
+# published: nginx (dev-nginx) proxies langfuse.wizzgeeks.com -> langfuse-web:7310.
+# For a local instance with a host port, add compose.langfuse.local.yaml.
+services:
+  langfuse-web:
+    image: langfuse/langfuse:2
+    container_name: langfuse-web
+    env_file: langfuse.env
+    environment:
+      PORT: "7310"
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # same key pair the agent uses (from backend/.env via the ./.env symlink)
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY in backend/.env and symlink it to ./.env}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY in backend/.env and symlink it to ./.env}
+    networks: [shared-app-network]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7310/api/public/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+networks:
+  shared-app-network:
+    external: true

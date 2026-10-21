@@ -89,6 +89,18 @@ export interface AgentConfig {
   language: string | null;
   /** Fixed opening line spoken instantly via TTS; null lets the LLM greet. */
   greeting: string | null;
+  /** Idle handling overrides; null = environment / per-language default. */
+  idle_prompt_secs: number | null;
+  idle_check_line: string | null;
+  idle_goodbye_line: string | null;
+  /** Rules appended to the prompt when the search tool is on; null = built-in text. */
+  knowledge_prompt: string | null;
+  knowledge_prompt_default: string;
+  knowledge_on: boolean;
+  /** Pronunciation dictionary as "word = spoken form" lines, and its Sarvam id. */
+  pronunciations: string;
+  tts_dict_id: string | null;
+  idle_defaults: { prompt_secs: number; check_lines: Record<string, string>; goodbye_lines: Record<string, string> };
   default_language: string;
   /** The built-in English prompt template with {language_*} placeholders. */
   default_prompt: string;
@@ -102,6 +114,12 @@ export interface ConfigVersion {
   temperature: number | null;
   language: string | null;
   greeting: string | null;
+  idle_prompt_secs: number | null;
+  idle_check_line: string | null;
+  idle_goodbye_line: string | null;
+  knowledge_prompt: string | null;
+  pronunciations: { word: string; spoken: string }[] | null;
+  tts_dict_id: string | null;
   note: string | null;
   created_at: string;
 }
@@ -144,4 +162,11 @@ export interface KnowledgeSearch {
   translate_ms: number;
   /** English form of the question that was embedded, when it was translated. */
   translated_query: string | null;
+}
+
+export interface TestCallInfo {
+  bot_url: string;
+  reachable: boolean;
+  /** null when the bot is unreachable; false when BOT_TRANSPORT disables WebRTC */
+  webrtc: boolean | null;
 }

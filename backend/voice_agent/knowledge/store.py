@@ -23,6 +23,7 @@ class KnowledgeStore:
     """One Qdrant collection holding every document's chunks, filterable by document."""
 
     def __init__(self, *, url: str, api_key: str | None, collection: str, vector_size: int) -> None:
+        self.url = url
         self.collection = collection
         self.vector_size = vector_size
         self._client = AsyncQdrantClient(url=url, api_key=api_key, timeout=30)

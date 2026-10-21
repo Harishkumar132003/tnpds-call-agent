@@ -15,6 +15,12 @@ create table if not exists agent_config (
 );
 alter table agent_config add column if not exists language text;
 alter table agent_config add column if not exists greeting text;
+alter table agent_config add column if not exists idle_prompt_secs double precision;
+alter table agent_config add column if not exists idle_check_line text;
+alter table agent_config add column if not exists idle_goodbye_line text;
+alter table agent_config add column if not exists knowledge_prompt text;
+alter table agent_config add column if not exists pronunciations jsonb;
+alter table agent_config add column if not exists tts_dict_id text;
 
 create table if not exists calls (
     id            uuid primary key,
@@ -53,6 +59,10 @@ create table if not exists turns (
 );
 alter table turns add column if not exists contributions jsonb;
 alter table turns add column if not exists searches jsonb;
+alter table turns add column if not exists prompt_tokens integer;
+alter table turns add column if not exists completion_tokens integer;
+alter table turns add column if not exists tts_characters integer;
+alter table turns add column if not exists stt_audio_seconds real;
 
 create table if not exists documents (
     id              uuid primary key,

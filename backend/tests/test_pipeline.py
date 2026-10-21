@@ -1,12 +1,16 @@
 from unittest.mock import AsyncMock, Mock
 
-from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
+from pipecat.frames.frames import EndFrame, LLMRunFrame, TTSSpeakFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import LLMService
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
-from voice_agent.pipeline import _register_transport_handlers, build_voice_pipeline
+from voice_agent.pipeline import (
+    _register_idle_handling,
+    _register_transport_handlers,
+    build_voice_pipeline,
+)
 from voice_agent.transports import TELEPHONY_AUDIO_RATES, TRANSPORT_PARAMS
 from voice_agent.transports.webrtc import webrtc_transport_params
 
@@ -36,7 +40,9 @@ def test_pipeline_uses_telephony_rates_when_asked(settings):
     params = voice_pipeline.worker._params
     assert (params.audio_in_sample_rate, params.audio_out_sample_rate) == (8000, 8000)
     tts = next(
-        p for p in voice_pipeline.pipeline.processors if type(p).__name__ == "SarvamTTSService"
+        p
+        for p in voice_pipeline.pipeline.processors
+        if type(p).__name__ == "SarvamTTSWithDictionary"
     )
     assert tts._init_sample_rate == 8000
 
@@ -60,7 +66,7 @@ def test_pipeline_processor_order(settings):
         "SarvamSTTService",
         "LLMUserAggregator",
         "SarvamLLMService",
-        "SarvamTTSService",
+        "SarvamTTSWithDictionary",
         "SmallWebRTCOutputTransport",
         "LLMAssistantAggregator",
     ]
@@ -114,3 +120,70 @@ async def test_fixed_greeting_skips_the_llm():
     assert context.messages == []  # no developer nudge, no LLM run
     (frames,), _ = worker.queue_frames.await_args
     assert isinstance(frames[0], TTSSpeakFrame) and frames[0].text == "வணக்கம்!"
+
+
+async def test_idle_asks_once_then_ends_the_call():
+    user = FakeTransport()  # same event_handler shape as the aggregator
+    worker = Mock(queue_frames=AsyncMock())
+    state: dict[str, str] = {}
+    _register_idle_handling(user, worker, state, check_line="still there?", goodbye_line="bye")  # type: ignore[arg-type]
+
+    await user.handlers["on_user_turn_idle"](user)
+    (frames,), _ = worker.queue_frames.await_args
+    assert [type(f) for f in frames] == [TTSSpeakFrame] and frames[0].text == "still there?"
+    assert state == {}
+
+    await user.handlers["on_user_turn_idle"](user)
+    (frames,), _ = worker.queue_frames.await_args
+    assert [type(f) for f in frames] == [TTSSpeakFrame, EndFrame] and frames[0].text == "bye"
+    assert state["end_reason"] == "idle_timeout"
+
+
+async def test_idle_counter_resets_when_the_caller_speaks():
+    user = FakeTransport()
+    worker = Mock(queue_frames=AsyncMock())
+    state: dict[str, str] = {}
+    _register_idle_handling(user, worker, state, check_line="still there?", goodbye_line="bye")  # type: ignore[arg-type]
+    await user.handlers["on_user_turn_idle"](user)
+    await user.handlers["on_user_turn_started"](user, None)  # caller replied
+    await user.handlers["on_user_turn_idle"](user)  # a later silence: asks again, does not hang up
+    (frames,), _ = worker.queue_frames.await_args
+    assert [type(f) for f in frames] == [TTSSpeakFrame] and state == {}
+
+
+def test_idle_disabled_when_zero(make_settings):
+    voice_pipeline = build_voice_pipeline(_offline_transport(), make_settings(idle_prompt_secs=0))
+    assert voice_pipeline.state == {}
+
+
+def test_idle_overrides_from_portal_config(settings):
+    voice_pipeline = build_voice_pipeline(
+        _offline_transport(), settings, idle_prompt_secs=25, idle_check_line="custom check"
+    )
+    params = voice_pipeline.user_aggregator._params
+    assert params.user_idle_timeout == 25
+    off = build_voice_pipeline(_offline_transport(), settings, idle_prompt_secs=0)
+    assert off.user_aggregator._params.user_idle_timeout == 0
+
+
+def test_knowledge_prompt_override_is_appended(make_settings):
+    from unittest.mock import Mock
+
+    from pipecat.services.llm_service import LLMService
+
+    from voice_agent.knowledge.tool import PROMPT_ADDITION, KnowledgeTool
+
+    tool = KnowledgeTool(service=Mock())
+    default = build_voice_pipeline(_offline_transport(), make_settings(), knowledge=tool)
+    llm = next(p for p in default.pipeline.processors if isinstance(p, LLMService))
+    assert PROMPT_ADDITION.strip() in llm.settings.system_instruction
+
+    custom = build_voice_pipeline(
+        _offline_transport(),
+        make_settings(),
+        knowledge=tool,
+        knowledge_prompt="Always search first.",
+    )
+    llm = next(p for p in custom.pipeline.processors if isinstance(p, LLMService))
+    assert llm.settings.system_instruction.rstrip().endswith("Always search first.")
+    assert PROMPT_ADDITION.strip() not in llm.settings.system_instruction

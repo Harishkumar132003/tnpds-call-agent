@@ -1,4 +1,9 @@
-"""Query translation so Indian-language questions retrieve from English documents."""
+"""Query translation so Indian-language questions retrieve from English documents.
+
+The documents are English and the conversation language is fixed per deployment
+(``AGENT_LANGUAGE``), so translation is always <that language> -> English; no
+language detection is involved.
+"""
 
 from __future__ import annotations
 
@@ -10,42 +15,20 @@ from loguru import logger
 from sarvamai import AsyncSarvamAI
 
 TRANSLATE_TIMEOUT_SECS = 2.0
-_NON_LATIN = re.compile(r"[^\x00-\x7F]")
-
-# Unicode blocks of the scripts the agent supports, mapped to Sarvam language codes.
-# Devanagari is shared by Hindi and Marathi; Hindi is the better default.
-_SCRIPT_RANGES = [
-    ((0x0B80, 0x0BFF), "ta-IN"),
-    ((0x0900, 0x097F), "hi-IN"),
-    ((0x0980, 0x09FF), "bn-IN"),
-    ((0x0A80, 0x0AFF), "gu-IN"),
-    ((0x0C80, 0x0CFF), "kn-IN"),
-    ((0x0D00, 0x0D7F), "ml-IN"),
-    ((0x0B00, 0x0B7F), "od-IN"),
-    ((0x0A00, 0x0A7F), "pa-IN"),
-    ((0x0C00, 0x0C7F), "te-IN"),
-]
-
-
-def detect_language_code(text: str, default: str = "hi-IN") -> str:
-    """Guess the Sarvam language code from the dominant script in ``text``."""
-    counts: dict[str, int] = {}
-    for ch in text:
-        code = ord(ch)
-        for (lo, hi), lang in _SCRIPT_RANGES:
-            if lo <= code <= hi:
-                counts[lang] = counts.get(lang, 0) + 1
-                break
-    return max(counts, key=counts.get) if counts else default
+_NON_ASCII = re.compile(r"[^\x00-\x7F]")
 
 
 def needs_translation(text: str) -> bool:
-    """True when a meaningful share of the text is outside ASCII (Indic script)."""
+    """True when the text is not already English (a meaningful share of non-ASCII letters).
+
+    The LLM often passes the search question in English already; skipping those
+    saves a translate round trip.
+    """
     letters = [ch for ch in text if ch.isalpha()]
     if not letters:
         return False
-    non_latin = sum(1 for ch in letters if _NON_LATIN.match(ch))
-    return non_latin / len(letters) > 0.3
+    non_ascii = sum(1 for ch in letters if _NON_ASCII.match(ch))
+    return non_ascii / len(letters) > 0.3
 
 
 class Translator(Protocol):
@@ -53,32 +36,27 @@ class Translator(Protocol):
 
 
 class SarvamTranslator:
-    """Sarvam translate API; returns None on failure so callers fall back to the original.
+    """Sarvam translate API, fixed source language -> English; None on failure.
 
-    ``source_language`` is the conversation language when known (the agent);
-    otherwise the script of the text decides (the portal's test box).
+    Callers fall back to the original text, so a translation outage never
+    blocks a reply.
     """
 
     def __init__(
-        self,
-        api_key: str,
-        *,
-        source_language: str | None = None,
-        model: str = "sarvam-translate:v1",
+        self, api_key: str, *, source_language: str, model: str = "sarvam-translate:v1"
     ) -> None:
         self._client = AsyncSarvamAI(api_subscription_key=api_key)
         self._model = model
         self._source_language = source_language
 
     async def to_english(self, text: str) -> str | None:
-        source = self._source_language or detect_language_code(text)
-        if source == "en-IN":
+        if self._source_language == "en-IN":
             return None
         try:
             response = await asyncio.wait_for(
                 self._client.text.translate(
                     input=text,
-                    source_language_code=source,
+                    source_language_code=self._source_language,
                     target_language_code="en-IN",
                     model=self._model,
                 ),

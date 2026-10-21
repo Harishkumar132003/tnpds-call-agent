@@ -12,7 +12,11 @@ Sources (all event callbacks, no frame inspection of our own):
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Protocol
 
+from pipecat.frames.frames import MetricsFrame
+from pipecat.metrics.metrics import LLMUsageMetricsData, STTUsageMetricsData, TTSUsageMetricsData
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, UserBotLatencyObserver
 from pipecat.processors.aggregators.llm_response_universal import (
     AssistantTurnStoppedMessage,
@@ -29,13 +33,64 @@ def _ms(seconds: float | None) -> int | None:
     return None if seconds is None else round(seconds * 1000)
 
 
-class ConversationTracker:
-    """Collects one :class:`TurnRecord` per assistant turn and hands it to the recorder."""
+class TurnSink(Protocol):
+    """Anything that wants finished turns: the Postgres recorder, Langfuse, ..."""
 
-    def __init__(self, recorder: CallRecorder, latency_observer: UserBotLatencyObserver) -> None:
-        self._recorder = recorder
+    def turn_completed(self, turn: TurnRecord) -> None: ...
+
+
+class ConversationTracker:
+    """Collects one :class:`TurnRecord` per assistant turn and hands it to every sink."""
+
+    def __init__(
+        self,
+        recorder: CallRecorder,
+        latency_observer: UserBotLatencyObserver,
+        *,
+        extra_sinks: list[TurnSink] | None = None,
+    ) -> None:
+        self._sinks: list[TurnSink] = [recorder, *(extra_sinks or [])]
         self._turn = TurnRecord(turn_index=0)
         self._register_latency_events(latency_observer)
+
+    def usage_observer(self) -> BaseObserver:
+        """Pipeline observer that attributes token/character/second usage to the current turn."""
+        tracker = self
+
+        class _UsageObserver(BaseObserver):
+            """Observers see a frame at every processor-to-processor hop; count it once."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._seen: dict[int, None] = {}
+
+            async def on_push_frame(self, data: FramePushed) -> None:
+                if not isinstance(data.frame, MetricsFrame):
+                    return
+                if data.frame.id in self._seen:
+                    return
+                self._seen[data.frame.id] = None
+                if len(self._seen) > 2000:  # bounded memory for long calls
+                    for key in list(self._seen)[:1000]:
+                        del self._seen[key]
+                for item in data.frame.data:
+                    tracker._add_usage(item)
+
+        return _UsageObserver()
+
+    def _add_usage(self, item: object) -> None:
+        turn = self._turn
+        if isinstance(item, LLMUsageMetricsData):
+            turn.prompt_tokens = (turn.prompt_tokens or 0) + (item.value.prompt_tokens or 0)
+            turn.completion_tokens = (turn.completion_tokens or 0) + (
+                item.value.completion_tokens or 0
+            )
+        elif isinstance(item, TTSUsageMetricsData):
+            turn.tts_characters = (turn.tts_characters or 0) + int(item.value)
+        elif isinstance(item, STTUsageMetricsData):
+            turn.stt_audio_seconds = (turn.stt_audio_seconds or 0.0) + float(
+                item.value.audio_seconds
+            )
 
     def attach_knowledge(self, tool: KnowledgeTool) -> None:
         """Keep every search (and its chunks) with the turn that triggered it."""
@@ -48,8 +103,14 @@ class ConversationTracker:
     def attach(self, user: LLMUserAggregator, assistant: LLMAssistantAggregator) -> None:
         @user.event_handler("on_user_turn_message_added")
         async def on_user_turn(_: object, message: UserTurnMessageAddedMessage) -> None:
-            self._turn.user_text = message.content
-            self._turn.user_spoke_at = datetime.now(UTC)
+            # A caller may be split into several user messages before the agent
+            # answers (end-of-turn fired mid-thought); keep all of them.
+            text = message.content.strip()
+            if self._turn.user_text:
+                self._turn.user_text = f"{self._turn.user_text} {text}"
+            else:
+                self._turn.user_text = text
+                self._turn.user_spoke_at = datetime.now(UTC)
 
         @assistant.event_handler("on_assistant_turn_stopped")
         async def on_assistant_turn(_: object, message: AssistantTurnStoppedMessage) -> None:
@@ -58,7 +119,8 @@ class ConversationTracker:
             self._turn.assistant_text = message.content
             self._turn.interrupted = message.interrupted
             self._turn.completed_at = datetime.now(UTC)
-            self._recorder.turn_completed(self._turn)
+            for sink in self._sinks:
+                sink.turn_completed(self._turn)
             self._turn = TurnRecord(turn_index=self._turn.turn_index + 1)
 
     def _register_latency_events(self, observer: UserBotLatencyObserver) -> None:

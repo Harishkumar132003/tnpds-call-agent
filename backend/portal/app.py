@@ -18,9 +18,12 @@ from voice_agent.knowledge.embeddings import OpenAIEmbedder
 from voice_agent.knowledge.extract import SUPPORTED_EXTENSIONS, UnsupportedFileError
 from voice_agent.knowledge.service import EmptyDocumentError, KnowledgeService
 from voice_agent.knowledge.store import KnowledgeStore
+from voice_agent.knowledge.tool import PROMPT_ADDITION
 from voice_agent.knowledge.translate import SarvamTranslator
 from voice_agent.languages import SUPPORTED_LANGUAGES, UnsupportedLanguageError, get_language
+from voice_agent.phrases import IDLE_CHECK_LINES, IDLE_GOODBYE_LINES
 from voice_agent.prompts import DEFAULT_PROMPT_TEMPLATE, build_system_prompt
+from voice_agent.pronunciation import SarvamDictionaries, entries_to_text, parse_entries
 from voice_agent.tracking.config_store import (
     AgentConfig,
     list_config_history,
@@ -48,7 +51,8 @@ limit $1
 TURNS_QUERY = """
 select turn_index, user_text, assistant_text, user_spoke_at, bot_spoke_at, completed_at,
        response_latency_ms, turn_release_ms, stt_ttfb_ms, llm_ttfb_ms, tts_ttfb_ms, interrupted,
-       contributions::text as contributions, searches::text as searches
+       contributions::text as contributions, searches::text as searches,
+       prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds
 from turns where call_id = $1 order by turn_index
 """
 
@@ -100,7 +104,18 @@ class ConfigIn(BaseModel):
     temperature: float | None = None
     language: str | None = None
     greeting: str | None = None
+    idle_prompt_secs: float | None = None
+    idle_check_line: str | None = None
+    idle_goodbye_line: str | None = None
+    knowledge_prompt: str | None = None
+    pronunciations: str | None = None
+    """``word = spoken form`` lines; None keeps the active version's dictionary."""
     note: str | None = None
+
+
+class PronunciationTestIn(BaseModel):
+    text: str
+    pronunciations: str | None = None
 
 
 def create_app(
@@ -180,6 +195,21 @@ def create_app(
             "temperature": config.temperature,
             "language": config.language,
             "greeting": config.greeting,
+            "idle_prompt_secs": config.idle_prompt_secs,
+            "idle_check_line": config.idle_check_line,
+            "idle_goodbye_line": config.idle_goodbye_line,
+            "knowledge_prompt": config.knowledge_prompt,
+            "pronunciations": entries_to_text(config.pronunciations),
+            "tts_dict_id": config.tts_dict_id,
+            "knowledge_prompt_default": PROMPT_ADDITION.strip(),
+            "knowledge_on": bool(
+                knowledge and knowledge.knowledge_enabled and knowledge.openai_api_key
+            ),
+            "idle_defaults": {
+                "prompt_secs": knowledge.idle_prompt_secs if knowledge else 10,
+                "check_lines": IDLE_CHECK_LINES,
+                "goodbye_lines": IDLE_GOODBYE_LINES,
+            },
             "default_language": default_prompt_language,
             "default_prompt": DEFAULT_PROMPT_TEMPLATE,
             "agent_name": agent_name,
@@ -187,34 +217,90 @@ def create_app(
         }
 
     @app.get("/api/config/preview")
-    async def api_config_preview(language: str, system_prompt: str | None = None):
+    async def api_config_preview(
+        language: str, system_prompt: str | None = None, knowledge_prompt: str | None = None
+    ):
         """Render a prompt (or the built-in one) for a language, as the agent will see it."""
         try:
             lang = get_language(language)
             text = build_system_prompt(agent_name, lang, override=system_prompt or None)
         except (UnsupportedLanguageError, KeyError, IndexError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        if knowledge and knowledge.knowledge_enabled and knowledge.openai_api_key:
+            text += "\n\n" + (knowledge_prompt or PROMPT_ADDITION).strip() + "\n"
         return {"language": lang.code, "prompt": text}
 
     @app.get("/api/config/history")
     async def api_config_history(request: Request):
-        return [dict(r) for r in await list_config_history(pool(request))]
+        return await list_config_history(pool(request))
 
     @app.post("/api/config", status_code=201)
     async def api_save_config(request: Request, body: ConfigIn):
         try:
             config = parse_config(body.system_prompt, body.temperature, body.language)
+            if body.idle_prompt_secs is not None and not 0 <= body.idle_prompt_secs <= 120:
+                raise ValueError("idle_prompt_secs must be between 0 and 120 seconds")
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        active = await load_active_config(pool(request))
+        language = config.language or default_prompt_language
+        pronunciations = active.pronunciations
+        dict_id = active.tts_dict_id
+        if body.pronunciations is not None:
+            try:
+                entries = parse_entries(body.pronunciations)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if knowledge is None:
+                raise HTTPException(503, "pronunciation dictionaries need the Sarvam key")
+            dictionaries = SarvamDictionaries(knowledge.sarvam_api_key.get_secret_value())
+            try:
+                dict_id = await dictionaries.replace(language, entries, active.tts_dict_id)
+            except Exception as exc:
+                raise HTTPException(502, f"Sarvam dictionary update failed: {exc}") from exc
+            pronunciations = [{"word": e.word, "spoken": e.spoken} for e in entries]
         new_id = await save_config(
             pool(request),
             system_prompt=config.system_prompt,
             temperature=config.temperature,
             language=config.language,
             greeting=(body.greeting or "").strip() or None,
+            idle_prompt_secs=body.idle_prompt_secs,
+            idle_check_line=(body.idle_check_line or "").strip() or None,
+            idle_goodbye_line=(body.idle_goodbye_line or "").strip() or None,
+            knowledge_prompt=(body.knowledge_prompt or "").strip() or None,
+            pronunciations=pronunciations,
+            tts_dict_id=dict_id,
             note=(body.note or "").strip() or None,
         )
-        return {"id": new_id}
+        return {"id": new_id, "tts_dict_id": dict_id}
+
+    @app.post("/api/pronunciation/test")
+    async def api_pronunciation_test(request: Request, body: PronunciationTestIn):
+        """Synthesise ``text`` with the active dictionary (or a temporary one from the
+        submitted entries) and return WAV audio as base64, for listening in the browser."""
+        if knowledge is None:
+            raise HTTPException(503, "needs the Sarvam key")
+        active = await load_active_config(pool(request))
+        language = active.language or default_prompt_language
+        api_key = knowledge.sarvam_api_key.get_secret_value()
+        dict_id, temporary = active.tts_dict_id, False
+        if body.pronunciations is not None:
+            try:
+                entries = parse_entries(body.pronunciations)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if entries:
+                dict_id = await SarvamDictionaries(api_key).create(language, entries)
+                temporary = True
+            else:
+                dict_id = None
+        try:
+            audio = await _synthesise(api_key, body.text, language, knowledge, dict_id)
+        finally:
+            if temporary and dict_id:
+                await SarvamDictionaries(api_key).delete(dict_id)
+        return {"audio_base64": audio, "dict_id": dict_id}
 
     # ---- knowledge base ---------------------------------------------------
 
@@ -226,6 +312,27 @@ def create_app(
                 "Knowledge base unavailable: set OPENAI_API_KEY and restart the portal",
             )
         return service
+
+    @app.get("/api/test-call")
+    async def api_test_call():
+        """What the browser needs to place a WebRTC test call: the bot URL and whether
+        the bot answers and has the WebRTC transport enabled (``BOT_TRANSPORT`` unset or
+        ``webrtc``)."""
+        import httpx
+
+        if knowledge is None:
+            return {"bot_url": None, "reachable": False, "webrtc": None}
+        url = knowledge.bot_public_url.rstrip("/")
+        reachable, webrtc = False, None
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{url}/status")
+                reachable = r.status_code == 200
+        except Exception:
+            reachable = False
+        if reachable:
+            webrtc = knowledge.bot_transport in (None, "webrtc")
+        return {"bot_url": url, "reachable": reachable, "webrtc": webrtc}
 
     @app.get("/api/knowledge/status")
     async def api_knowledge_status(request: Request):
@@ -299,6 +406,37 @@ def create_app(
     return app
 
 
+async def _synthesise(
+    api_key: str, text: str, language: str, settings: Settings, dict_id: str | None
+) -> str:
+    import base64
+
+    import httpx
+
+    payload = {
+        "text": text,
+        "target_language_code": language,
+        "speaker": settings.sarvam_tts_speaker or "shubh",
+        "model": settings.sarvam_tts_model,
+        "speech_sample_rate": 24000,
+        "output_audio_codec": "wav",
+        "pace": settings.sarvam_tts_pace,
+    }
+    if dict_id:
+        payload["dict_id"] = dict_id
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            "https://api.sarvam.ai/text-to-speech",
+            headers={"api-subscription-key": api_key},
+            json=payload,
+        )
+    if r.status_code != 200:
+        raise HTTPException(502, f"Sarvam TTS failed: {r.text[:200]}")
+    audio = r.json()["audios"][0]
+    base64.b64decode(audio)  # validate
+    return audio
+
+
 def _build_knowledge(
     pool: asyncpg.Pool, settings: Settings
 ) -> tuple[KnowledgeStore | None, KnowledgeService | None]:
@@ -324,9 +462,12 @@ def _build_knowledge(
         pool=pool,
         store=store,
         embedder=embedder,
-        translator=SarvamTranslator(settings.sarvam_api_key.get_secret_value()),
+        translator=SarvamTranslator(
+            settings.sarvam_api_key.get_secret_value(), source_language=settings.agent_language
+        ),
         chunk_chars=settings.knowledge_chunk_chars,
         chunk_overlap=settings.knowledge_chunk_overlap,
+        whole_document=settings.knowledge_whole_document,
     )
     return store, service
 

@@ -8,6 +8,10 @@ from dataclasses import dataclass
 _PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
 _SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
+# A whole document is kept as one chunk up to this size (~6k tokens, well inside
+# the 8k-token embedding limit); longer ones fall back to size-based splitting.
+WHOLE_DOCUMENT_MAX_CHARS = 24_000
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -15,15 +19,26 @@ class Chunk:
     text: str
 
 
-def chunk_text(text: str, *, max_chars: int = 1200, overlap: int = 200) -> list[Chunk]:
-    """Pack whole paragraphs up to ``max_chars``; oversized ones are split by sentence.
+def chunk_text(
+    text: str, *, max_chars: int = 1200, overlap: int = 200, whole_document: bool = False
+) -> list[Chunk]:
+    """Split ``text`` for embedding.
 
-    ``overlap`` characters from the end of a chunk are repeated at the start of
-    the next so a fact that straddles a boundary is still retrievable.
+    ``whole_document=True`` keeps the entire text as a single chunk (the right
+    unit for one-topic documents such as an FAQ sheet) as long as it fits
+    :data:`WHOLE_DOCUMENT_MAX_CHARS`; otherwise, and by default, whole
+    paragraphs are packed up to ``max_chars`` with ``overlap`` characters
+    repeated across boundaries, and oversized paragraphs are split by sentence.
     """
     if max_chars <= 0 or overlap < 0 or overlap >= max_chars:
         raise ValueError("need max_chars > overlap >= 0")
     paragraphs = [p.strip() for p in _PARAGRAPH_BREAK.split(text) if p.strip()]
+    if whole_document:
+        whole = "\n\n".join(paragraphs)
+        if not whole:
+            return []
+        if len(whole) <= WHOLE_DOCUMENT_MAX_CHARS:
+            return [Chunk(0, whole)]
     pieces: list[str] = []
     for paragraph in paragraphs:
         pieces.extend(_split_long(paragraph, max_chars))

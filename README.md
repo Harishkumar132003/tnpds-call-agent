@@ -116,6 +116,24 @@ session and spend your Sarvam credits, so never use `--host 0.0.0.0` on a
 network you do not control without `--allowed-origins` (or
 `PIPECAT_ALLOWED_ORIGINS`) and a firewall or tunnel in front of it.
 
+### Test call from the portal
+
+The portal's **Test call** page places the same WebRTC call from inside the
+portal, in the portal's design: Start call, mute, hang up, a live transcript
+(what the agent heard and said, as it happens), and, after hang-up, a link to
+the tracked call record with its latency, searches and cost. It uses the
+official browser SDK (`@pipecat-ai/client-js` with the SmallWebRTC transport)
+against the bot's `/start` and `/api/offer` endpoints. `BOT_PUBLIC_URL` in
+`backend/.env` says where the browser finds the bot (default
+`http://localhost:7860`; `https://callagent.wizzgeeks.com` in
+`.env.docker`), and the page's header shows whether the bot answers.
+
+Leave `BOT_TRANSPORT` unset so one bot process serves phone calls on `/ws`
+and browser calls over WebRTC at the same time; `BOT_TRANSPORT=plivo`
+switches WebRTC (and this page) off. Browser audio is peer-to-peer UDP to the
+server's public IP, so a deployed server needs its UDP ports open or a TURN
+server; Cloudflare's HTTP proxy does not carry it.
+
 ### Headless check without a browser
 
 ```bash
@@ -282,10 +300,103 @@ server {
   non-root user, and strips bundled test suites. Health checks hit `/status`
   and `/api/stats`; log rotation is on.
 
+## Langfuse: cost tracking and evaluation (optional)
+
+`compose.langfuse.yaml` runs **Langfuse v2** as a single container,
+`langfuse-web`, on `shared-app-network`, listening on port **7310** (the next
+free port in the nginx site list), storing its data in a `langfuse` database on
+the server's existing Postgres. No ClickHouse, Redis or object store is needed
+for v2, and no host port is published: nginx serves it at
+**https://langfuse.wizzgeeks.com**. One production instance is shared by the
+deployed agent and by developers' laptops, so every call lands in the same
+project.
+
+### Deploy Langfuse on the server (once)
+
+```bash
+# 1. DNS: in Cloudflare add langfuse.wizzgeeks.com as a proxied A record to the server,
+#    like the other *.wizzgeeks.com names.
+
+# 2. Database on the existing Postgres container
+docker exec -it oasys-postgres psql -U admin -d postgres -c "CREATE DATABASE langfuse OWNER voice_agent;"
+
+# 3. Settings (in the repo checkout on the server)
+cp langfuse.env.example langfuse.env     # set DATABASE_URL (oasys-postgres, user voice_agent),
+                                          # SALT and NEXTAUTH_SECRET (openssl rand -hex 32),
+                                          # NEXTAUTH_URL=https://langfuse.wizzgeeks.com, the INIT_* login
+# backend/.env must hold the project key pair the bootstrap creates:
+#   LANGFUSE_PUBLIC_KEY=pk-lf-<uuid>   LANGFUSE_SECRET_KEY=sk-lf-<uuid>   (uuidgen for each)
+ln -sf backend/.env .env                  # compose reads the two keys from here
+
+# 4. Start it and check health from inside the network
+docker compose -f compose.langfuse.yaml up -d
+docker exec langfuse-web wget -qO- http://127.0.0.1:7310/api/public/health
+
+# 5. nginx: pull the newserver repo (block for langfuse.wizzgeeks.com -> langfuse-web:7310) and reload
+cd ~/workspace/newserver && git pull && docker exec dev-nginx nginx -t && docker exec dev-nginx nginx -s reload
+
+# 6. Prices, so traces show cost (idempotent; run from any machine with the keys)
+cd backend && uv run python scripts/langfuse_models.py --host https://langfuse.wizzgeeks.com
+```
+
+Log in at https://langfuse.wizzgeeks.com with the `LANGFUSE_INIT_USER_*`
+credentials from `langfuse.env`; the project "Voice Agent" already exists with
+the key pair from `backend/.env`.
+
+### Point the agent at it
+
+Both environments use the same project keys; only the host differs:
+
+| Where the agent runs | `LANGFUSE_HOST` | File |
+|---|---|---|
+| deployed container | `http://langfuse-web:7310` (same docker network) | `backend/.env.docker` |
+| a laptop | `https://langfuse.wizzgeeks.com` | `backend/.env` |
+
+```
+LANGFUSE_ENABLED=true                         # off by default; true turns tracing on
+LANGFUSE_PUBLIC_KEY=pk-lf-...                 # one key pair: used by the agent AND by Langfuse's first-start bootstrap
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+Processes read `.env` at start-up, so restart the bot (and `docker compose up -d`
+on the server) after changing these. To run a private Langfuse on a laptop
+instead, add the overlay that publishes port 3100:
+`docker compose -f compose.langfuse.yaml -f compose.langfuse.local.yaml up -d`
+and use `LANGFUSE_HOST=http://localhost:3100`.
+
+With the switch on and all three set, the call tracker sends every call as one Langfuse trace
+(id = the call id in the portal) containing one span per turn with the user
+and assistant text, the latency breakdown, any knowledge searches, and a
+generation per model call carrying usage: LLM prompt/completion tokens,
+TTS characters, STT audio seconds. Events are batched on a background thread,
+so the audio pipeline never waits on Langfuse.
+
+- **Cost**: Langfuse prices usage only for models it has a definition for.
+  `scripts/langfuse_models.py` adds them (or Settings → Models) with Sarvam's list prices, which are in INR, so read every cost Langfuse
+  shows as rupees even though the UI prints a dollar sign:
+  `sarvam-105b` ₹15 / 1M input tokens and ₹60 / 1M output (unit TOKENS,
+  input 0.000015, output 0.00006); `bulbul:v3` ₹30 / 10k characters (unit
+  CHARACTERS, output 0.003); `saaras:v4` ₹30 / hour (unit SECONDS, input
+  0.008333). Costs are computed when a trace is ingested, so definitions
+  apply to calls made after they exist, not retroactively.
+- **Usage accuracy**: token, character and second counts come from Pipecat's
+  own usage metrics (the provider's reported token usage, the text sent to
+  TTS, the audio sent to STT), counted once per metrics frame. They match
+  Sarvam's billing units; the remaining gaps are Sarvam's cheaper cached-input
+  token rate (not tracked) and per-second rounding of STT audio. Usage recorded
+  before 2026-10-21 was over-counted by a constant factor per service (TTS ×4,
+  LLM ×4, STT ×5-6) due to frames being counted at every pipeline hop.
+- **Evaluation**: score traces manually or via the API, build datasets of
+  test questions with expected answers, and compare runs. Automated
+  LLM-as-a-judge evaluators are a Langfuse v3 feature and are not available
+  in v2.
+
 ## Knowledge base (documents in Qdrant)
 
-The portal's **Knowledge** page uploads documents, extracts their text, splits
-it into ~1,200-character chunks with 200 characters of overlap, embeds the
+The portal's **Knowledge** page uploads documents, extracts their text, indexes
+each document as **one chunk** (`KNOWLEDGE_WHOLE_DOCUMENT=true`; an FAQ sheet
+is a single topic and its steps only make sense together; documents over ~24k
+characters fall back to ~1,200-character chunks with overlap), embeds the
 chunks with OpenAI's multilingual `text-embedding-3-small`, and stores them in
 a dedicated Qdrant collection (`voice_agent_knowledge` by default, one
 collection for all documents, filterable by document). A "Test retrieval" box
@@ -297,14 +408,17 @@ Requirements: a local Qdrant (`QDRANT_URL`, default `http://localhost:6333`)
 and `OPENAI_API_KEY` for the embeddings. Supported files: PDF, DOCX, TXT, MD,
 CSV (up to 25 MB). Ingestion runs in the portal process.
 
-**Questions in Indian languages** are translated to English with Sarvam's
-translate API before embedding (the documents are English), both in the
-portal's test box, which shows the translated query, and on calls. Measured:
+**Questions in the conversation language** (`AGENT_LANGUAGE`, e.g. Tamil) are
+translated to English with Sarvam's translate API before embedding, since the
+documents are English. This happens both in the portal's test box, which shows
+the translated query, and on calls; text that is already English is embedded
+directly. Measured:
 a Tamil question scored 0.17 against the right chunk untranslated and 0.5+
 translated; translation takes 0.6 – 1 s.
 
 **On calls**, when `KNOWLEDGE_ENABLED=true` (default) and the embedding key is
-set, the LLM gets a `search_knowledge_base` tool and a prompt rule to use it for
+set, the LLM gets a `search_knowledge_base` tool that returns the best
+`KNOWLEDGE_TOP_K` chunk(s) (default 1: the single most relevant sheet, whole) and a prompt rule to use it for
 procedure, document, status and complaint questions and to answer only from
 what it returns. The moment the model decides to search, the agent speaks a
 short line in the conversation language ("ஒரு நிமிடம், நான் பார்க்கிறேன்.")
@@ -318,6 +432,33 @@ search times, every chunk with its score and whether it was used, and what was
 passed to the LLM.
 `backend/scripts/xlsx_to_pdfs.py` turns a FAQ workbook into one PDF per sheet
 for uploading.
+
+## Idle callers
+
+After the agent finishes speaking, if the caller stays silent for
+`IDLE_PROMPT_SECS` (default 10) the agent asks once whether they are still
+there, in the conversation language ("நீங்க லைன்ல இருக்கீங்களா?"). If the
+silence continues for the same period, it says a short goodbye and ends the
+call: the pipeline shuts down after the goodbye finishes playing, and on
+Plivo the call is hung up (needs `PLIVO_AUTH_ID` / `PLIVO_AUTH_TOKEN`). Any
+speech from the caller resets the counter. The call is stored with
+`end_reason = idle_timeout`. Set `IDLE_PROMPT_SECS=0` to disable, and
+`IDLE_CHECK_LINE` / `IDLE_GOODBYE_LINE` to change the wording.
+
+## Pronunciation (Sarvam dictionary)
+
+The **Pronunciation** page of the portal holds a table of entries, one row
+per word: the written form and how it should be spoken (exact matches, plain
+text, up to 100 entries), for example `TNPDS` = `டி என் பி டி எஸ்`. The API
+stores them as `word = spoken` lines. Saving it creates a Sarvam
+pronunciation dictionary for the conversation language, deletes the previous
+one, and stores the entries and the `dict_id` with the config version; new
+calls pass that `dict_id` to Sarvam TTS over the websocket (Pipecat does not
+send it, so `SarvamTTSWithDictionary` in `voice_agent/services.py` adds it
+to the config message). "Listen before saving" synthesises a sample sentence
+with the entries as typed (through a temporary dictionary that is deleted
+afterwards). Saves from the configuration page keep the active dictionary; restoring an
+older config version does not change it.
 
 ## Latency: what was measured and what to tune
 

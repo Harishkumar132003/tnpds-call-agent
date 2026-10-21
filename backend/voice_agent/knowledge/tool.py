@@ -15,7 +15,7 @@ from pipecat.services.llm_service import FunctionCallParams
 from voice_agent.knowledge.service import KnowledgeService
 
 TOOL_NAME = "search_knowledge_base"
-MAX_RESULT_CHARS = 2500
+MAX_RESULT_CHARS = 12_000  # a whole FAQ sheet (largest is ~9.5k chars)
 MIN_SCORE = 0.25
 
 # Spoken the moment the LLM decides to search, so the caller is never left in silence.
@@ -130,8 +130,9 @@ class KnowledgeTool:
         try:
             result = await self.service.search(question, limit=self.limit)
         except Exception as exc:
-            logger.warning(f"Knowledge: search failed: {exc}")
-            await self._notify(SearchRecord(question, None, 0, 0, 0, [], error=str(exc)[:300]))
+            detail = f"{exc} (qdrant={self.service.qdrant_url})"
+            logger.warning(f"Knowledge: search failed: {detail}")
+            await self._notify(SearchRecord(question, None, 0, 0, 0, [], error=detail[:300]))
             await params.result_callback({"found": False, "reason": "search unavailable"})
             return
 

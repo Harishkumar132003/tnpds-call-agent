@@ -1,4 +1,5 @@
 # ---- secrets: never commit real credentials ----
+.env
 backend/.env
 backend/.env.*
 !backend/.env.example
@@ -29,3 +30,4 @@ frontend/dist/
 *.wav
 *.mp3
 recordings/
+langfuse.env

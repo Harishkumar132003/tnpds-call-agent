@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import replace
 
 from loguru import logger
@@ -24,6 +25,7 @@ from voice_agent.services import build_knowledge_service
 from voice_agent.tracking import get_tracking_pool
 from voice_agent.tracking.config_store import load_active_config
 from voice_agent.tracking.conversation import ConversationTracker
+from voice_agent.tracking.langfuse_export import LangfuseExporter, langfuse_configured
 from voice_agent.tracking.recorder import CallInfo, CallRecorder
 from voice_agent.transports import WEB_AUDIO_RATES, AudioRates
 
@@ -53,7 +55,12 @@ async def run_voice_session(
     latency_observer = UserBotLatencyObserver()
     startup_observer = _startup_timing_logger()
     knowledge_service = build_knowledge_service(settings)
-    knowledge_tool = KnowledgeTool(knowledge_service) if knowledge_service else None
+    knowledge_tool = (
+        KnowledgeTool(knowledge_service, limit=settings.knowledge_top_k)
+        if knowledge_service
+        else None
+    )
+    call_id = uuid.uuid4()  # shared by the Langfuse trace and the portal's call record
     voice_pipeline = build_voice_pipeline(
         transport,
         settings,
@@ -63,20 +70,33 @@ async def run_voice_session(
         greeting=config.greeting or settings.agent_greeting,
         observers=[latency_observer, startup_observer],
         knowledge=knowledge_tool,
+        idle_prompt_secs=config.idle_prompt_secs,
+        idle_check_line=config.idle_check_line,
+        idle_goodbye_line=config.idle_goodbye_line,
+        knowledge_prompt=config.knowledge_prompt,
+        tts_dict_id=config.tts_dict_id,
     )
 
     recorder: CallRecorder | None = None
+    exporter: LangfuseExporter | None = None
     if pool is not None:
         info = replace(
             call_info or CallInfo(transport="unknown", language=settings.agent_language),
             config_id=config.id,
         )
-        recorder = CallRecorder(pool, info)
-        tracker = ConversationTracker(recorder, latency_observer)
+        recorder = CallRecorder(pool, info, call_id=call_id)
+        if langfuse_configured(settings):
+            exporter = LangfuseExporter(settings, info, call_id)
+        tracker = ConversationTracker(
+            recorder, latency_observer, extra_sinks=[exporter] if exporter else None
+        )
         tracker.attach(voice_pipeline.user_aggregator, voice_pipeline.assistant_aggregator)
         if knowledge_tool is not None:
             tracker.attach_knowledge(knowledge_tool)
+        voice_pipeline.worker.add_observer(tracker.usage_observer())
         recorder.start()
+        if exporter is not None:
+            exporter.start()
 
     runner = WorkerRunner(handle_sigint=handle_sigint)
     started = time.monotonic()
@@ -87,7 +107,8 @@ async def run_voice_session(
         f"audio={audio_rates.input_hz}/{audio_rates.output_hz} Hz, "
         f"config={'db#' + str(config.id) if config.id else 'env'}, "
         f"tracking={'on' if recorder else 'off'}, "
-        f"knowledge={'on' if knowledge_tool else 'off'})"
+        f"knowledge={'on' if knowledge_tool else 'off'}, "
+        f"tracing={'langfuse' if langfuse_configured(settings) else 'off'}, call={call_id})"
     )
     end_reason = "completed"
     try:
@@ -97,11 +118,14 @@ async def run_voice_session(
         end_reason = f"error: {type(exc).__name__}"
         raise
     finally:
+        end_reason = voice_pipeline.state.get("end_reason", end_reason)
         duration = time.monotonic() - started
         turns = _count_user_turns(voice_pipeline.context)
         logger.info(f"Session ended after {duration:.1f}s with {turns} user turn(s)")
         if recorder is not None:
             await recorder.close(end_reason)
+        if exporter is not None:
+            await exporter.close(end_reason)
 
 
 def _startup_timing_logger() -> StartupTimingObserver:

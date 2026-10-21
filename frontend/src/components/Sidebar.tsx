@@ -50,6 +50,14 @@ export function Sidebar({ liveCalls, backendUp, language, agentName }: Props) {
           <Icon name="file" className="nav__icon" />
           <span className="nav__label">Knowledge</span>
         </NavLink>
+        <NavLink to="/pronunciation" className={navClass}>
+          <Icon name="sparkle" className="nav__icon" />
+          <span className="nav__label">Pronunciation</span>
+        </NavLink>
+        <NavLink to="/test-call" className={navClass}>
+          <Icon name="send" className="nav__icon" />
+          <span className="nav__label">Test call</span>
+        </NavLink>
       </nav>
 
       <div className="who">

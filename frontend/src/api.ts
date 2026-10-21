@@ -1,4 +1,5 @@
 import type {
+  TestCallInfo,
   AgentConfig,
   CallDetail,
   CallSummary,
@@ -24,6 +25,12 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
 }
 
 export const api = {
+  pronunciationTest: (text: string, pronunciations: string | null) =>
+    send<{ audio_base64: string; dict_id: string | null }>('/api/pronunciation/test', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text, pronunciations }),
+    }),
   knowledgeStatus: () => get<KnowledgeStatus>('/api/knowledge/status'),
   documents: () => get<KnowledgeDocument[]>('/api/documents'),
   uploadDocument: (file: File) => {
@@ -39,13 +46,15 @@ export const api = {
       body: JSON.stringify({ question, limit, document_id: documentId ?? null }),
     }),
   stats: () => get<Stats>('/api/stats'),
+  testCall: () => get<TestCallInfo>('/api/test-call'),
   calls: (limit = 200) => get<CallSummary[]>(`/api/calls?limit=${limit}`),
   call: (id: string) => get<{ call: CallDetail; turns: Turn[] }>(`/api/calls/${id}`),
   config: () => get<AgentConfig>('/api/config'),
   configHistory: () => get<ConfigVersion[]>('/api/config/history'),
-  previewPrompt: (language: string, systemPrompt: string | null) => {
+  previewPrompt: (language: string, systemPrompt: string | null, knowledgePrompt?: string | null) => {
     const q = new URLSearchParams({ language });
     if (systemPrompt) q.set('system_prompt', systemPrompt);
+    if (knowledgePrompt) q.set('knowledge_prompt', knowledgePrompt);
     return get<{ language: string; prompt: string }>(`/api/config/preview?${q}`);
   },
   saveConfig: async (body: {
@@ -53,6 +62,11 @@ export const api = {
     temperature: number | null;
     language: string | null;
     greeting: string | null;
+    idle_prompt_secs: number | null;
+    idle_check_line: string | null;
+    idle_goodbye_line: string | null;
+    knowledge_prompt: string | null;
+    pronunciations?: string | null;
     note: string | null;
   }) => {
     const res = await fetch('/api/config', {

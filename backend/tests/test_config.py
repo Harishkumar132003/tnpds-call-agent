@@ -99,3 +99,18 @@ def test_runner_args_from_settings(make_settings):
     ]
     # nothing configured: argv untouched
     assert runner_args_from_settings(["--port", "7870"], make_settings()) == ["--port", "7870"]
+
+
+def test_langfuse_configured_needs_all_three(make_settings):
+    from voice_agent.tracking.langfuse_export import langfuse_configured
+
+    full = dict(
+        langfuse_host="http://localhost:3100", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    assert not langfuse_configured(make_settings())
+    assert not langfuse_configured(make_settings(**full))  # off by default
+    assert not langfuse_configured(
+        make_settings(langfuse_enabled=True, langfuse_host="http://x", langfuse_public_key="pk")
+    )
+    assert langfuse_configured(make_settings(langfuse_enabled=True, **full))
+    assert not langfuse_configured(make_settings(langfuse_enabled=False, **full))
