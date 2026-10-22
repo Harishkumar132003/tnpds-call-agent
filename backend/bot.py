@@ -103,6 +103,49 @@ def runner_args_from_settings(argv: list[str], settings: Settings) -> list[str]:
     return args
 
 
+PLIVO_STREAM_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">wss://{host}/ws</Stream>
+</Response>"""
+
+
+def _arg_value(argv: list[str], *names: str) -> str | None:
+    for i, arg in enumerate(argv):
+        for name in names:
+            if arg == name and i + 1 < len(argv):
+                return argv[i + 1]
+            if arg.startswith(name + "="):
+                return arg.split("=", 1)[1]
+    return None
+
+
+def register_plivo_webhook(app, argv: list[str]) -> bool:
+    """Serve Plivo's answer webhook (``POST /``) when no single transport is forced.
+
+    Pipecat's runner registers that route only with ``-t plivo``, which also
+    switches WebRTC off. Without ``-t`` it still serves the ``/ws`` audio socket
+    but answers Plivo with 405, so calls never connect. Adding the same XML
+    here lets one process take phone calls and browser test calls.
+    """
+    if _arg_value(argv, "-t", "--transport") is not None:
+        return False  # the runner registers its own route for -t plivo
+    host = _arg_value(argv, "--proxy", "-x")
+    if not host:
+        logger.warning("No PUBLIC_HOST/--proxy: Plivo's answer webhook (POST /) is not served")
+        return False
+    xml = PLIVO_STREAM_XML.format(host=host)
+
+    from fastapi.responses import HTMLResponse
+
+    @app.post("/", include_in_schema=False)
+    async def plivo_answer():
+        logger.debug("POST / -> Plivo stream XML")
+        return HTMLResponse(content=xml, media_type="application/xml")
+
+    logger.info(f"Plivo answer webhook on POST / -> wss://{host}/ws")
+    return True
+
+
 def _warn_if_knowledge_unreachable(settings: Settings) -> None:
     """Say so at start-up when Qdrant cannot be reached, instead of per failed search."""
     service = build_knowledge_service(settings)
@@ -161,6 +204,9 @@ def main() -> None:
     configure_logging(_settings.log_level, secrets=_secret_values(_settings))
     _warn_if_knowledge_unreachable(_settings)
     sys.argv[1:] = runner_args_from_settings(sys.argv[1:], _settings)
+    from pipecat.runner.run import app as runner_app
+
+    register_plivo_webhook(runner_app, sys.argv[1:])
     run_pipecat()
 
 
