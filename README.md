@@ -467,6 +467,17 @@ speech from the caller resets the counter. The call is stored with
 `end_reason = idle_timeout`. Set `IDLE_PROMPT_SECS=0` to disable, and
 `IDLE_CHECK_LINE` / `IDLE_GOODBYE_LINE` to change the wording.
 
+## How knowledge searches are worded
+
+The language model does not write the search query itself. It passes the
+caller's own words, one item per separate question, to `search_knowledge_base`
+(`questions: [...]`), adding only a missing subject when a question refers back
+("புது ஸ்மார்ட் கார்டுக்கு என்னென்ன டாக்குமெண்ட்லாம் தேவை?"). Each item is
+translated to English by the translation model and searched on its own, in
+parallel; the sheets found are merged, each sent once. Before this, the model
+rewrote the question in English and on real calls dropped the second of two
+questions and introduced words the caller never said ("passport", "RTO").
+
 ## Models per step (Sarvam)
 
 The **Models** page of the portal picks the Sarvam model for
@@ -482,7 +493,7 @@ voice that cannot speak Tamil (bulbul:v2, for example, rejects it).
 | speech to text | `saaras:v4` (recommended), `saaras:v3` | the two models that work over the streaming websocket |
 | language model | `sarvam-105b` | Sarvam's own model only, by choice. Sarvam's API also serves GLM, Gemma and DeepSeek; they passed the Tamil and tool-call probes and can be added to the catalogue if wanted |
 | text to speech | `bulbul:v3` (recommended) with its 37 voices; `bulbul:v4-flash` with 207 persona voices (Sarvam lists 209; the two Assamese ones are left out because the agent does not support as-IN) | v3 voices speak every language and Sarvam's per-language picks are listed first with its quality tier (1 best). v4-flash voices are recorded for one language and one style (`aravind_ta_ads`), so only the voices for the selected language are offered, and the model is hidden for Malayalam and Odia, which have none. The voice list comes from Sarvam's API (`voice_agent/data/bulbul_v4_flash_voices.json`). Pipecat 1.12 does not know v4-flash, so `services.py` registers it; it was checked over the websocket with a pronunciation dictionary on 2026-10-22 |
-| translation | `sarvam-translate:v1` (recommended), `mayura:v1` | Tamil to English before searching |
+| translation | `mayura:v1` (recommended, colloquial mode), `sarvam-translate:v1` | turns each of the caller's questions into English before searching. On eight real spoken-Tamil caller phrases Mayura was faithful on all eight; Sarvam Translate v1 invented an unrelated sentence for one |
 | embedding (OpenAI) | `text-embedding-3-small` (recommended), `text-embedding-3-large`, `text-embedding-ada-002` | embeds documents and questions. Changing it re-embeds every document on save: the portal keeps each document's extracted text for this. Documents uploaded before that (before 2026-10-21) are marked `needs-reupload` and must be uploaded again |
 
 Choices equal to the environment default (`SARVAM_STT_MODEL`, `LLM_MODEL`,

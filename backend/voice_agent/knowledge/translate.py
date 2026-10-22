@@ -42,9 +42,7 @@ class SarvamTranslator:
     blocks a reply.
     """
 
-    def __init__(
-        self, api_key: str, *, source_language: str, model: str = "sarvam-translate:v1"
-    ) -> None:
+    def __init__(self, api_key: str, *, source_language: str, model: str = "mayura:v1") -> None:
         self._client = AsyncSarvamAI(api_subscription_key=api_key)
         self._model = model
         self._source_language = source_language
@@ -59,6 +57,9 @@ class SarvamTranslator:
                     source_language_code=self._source_language,
                     target_language_code="en-IN",
                     model=self._model,
+                    # Mayura reads spoken, code-mixed speech best in its colloquial mode;
+                    # sarvam-translate:v1 is formal only and rejects the parameter
+                    **({"mode": "modern-colloquial"} if self._model.startswith("mayura") else {}),
                 ),
                 timeout=TRANSLATE_TIMEOUT_SECS,
             )

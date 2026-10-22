@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     sarvam_tts_model: str = "bulbul:v3"
     sarvam_tts_speaker: str | None = None
     sarvam_tts_pace: float = Field(default=1.0, gt=0)  # model range checked in services
-    translate_model: str = "sarvam-translate:v1"
+    translate_model: str = "mayura:v1"
     """Sarvam translation model for knowledge-base queries
     (``mayura:v1`` or ``sarvam-translate:v1``)."""
 

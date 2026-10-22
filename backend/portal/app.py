@@ -225,7 +225,7 @@ def create_app(
                 "llm": knowledge.llm_model if knowledge else "sarvam-105b",
                 "tts": knowledge.sarvam_tts_model if knowledge else "bulbul:v3",
                 "tts_speaker": (knowledge.sarvam_tts_speaker if knowledge else None) or "shubh",
-                "translate": knowledge.translate_model if knowledge else "sarvam-translate:v1",
+                "translate": knowledge.translate_model if knowledge else "mayura:v1",
                 "embedding": knowledge.embedding_model if knowledge else "text-embedding-3-small",
             },
             "knowledge_prompt_default": PROMPT_ADDITION.strip(),

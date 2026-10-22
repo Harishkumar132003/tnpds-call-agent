@@ -207,7 +207,7 @@ async def test_knowledge_tool_handler_returns_passages_and_speaks_filler():
     tool = KnowledgeTool(service, limit=3)
     results = []
     params = Mock(
-        arguments={"question": "ஆதார் தேவையா?"},
+        arguments={"questions": ["ஆதார் தேவையா?"]},
         result_callback=AsyncMock(side_effect=lambda r: results.append(r)),
     )
     await tool.handle(params)
@@ -235,7 +235,7 @@ async def test_knowledge_tool_notifies_listeners_with_chunks():
     tool = KnowledgeTool(KnowledgeService(pool=None, store=store, embedder=embedder))
     records = []
     tool.on_search(records.append)
-    params = Mock(arguments={"question": "Is Aadhaar needed?"}, result_callback=AsyncMock())
+    params = Mock(arguments={"questions": ["Is Aadhaar needed?"]}, result_callback=AsyncMock())
     await tool.handle(params)
     [record] = records
     assert record.question == "Is Aadhaar needed?"
@@ -287,3 +287,101 @@ async def test_service_whole_document_ingest_is_one_chunk():
     )  # would be 3+ chunks otherwise
     result = await service.ingest("sheet.txt", text.encode(), "text/plain")
     assert result.chunk_count == 1
+
+
+async def test_tool_searches_each_question_in_the_callers_words():
+    from unittest.mock import Mock
+
+    from voice_agent.knowledge.chunk import Chunk
+    from voice_agent.knowledge.store import Hit
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    class TwoTopicTranslator:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        async def to_english(self, text):
+            self.calls.append(text)
+            return "steps to apply" if "ஸ்டெப்ஸ்" in text else "documents needed"
+
+    class TopicEmbedder(FakeEmbedder):
+        async def embed(self, texts):
+            self.calls.append(texts)
+            return [[1.0, 0, 0] if "steps" in t else [0, 1.0, 0] for t in texts]
+
+    class RankingStore(FakeStore):
+        async def search(self, vector, *, limit, document_id=None):
+            scored = [
+                Hit(
+                    sum(a * b for a, b in zip(vector, v, strict=True)),
+                    c.text,
+                    d,
+                    self.names[d],
+                    c.index,
+                )
+                for d, items in self.points.items()
+                for c, v in items
+            ]
+            return sorted(scored, key=lambda h: -h.score)[:limit]
+
+    store, translator = RankingStore(), TwoTopicTranslator()
+    await store.upsert(
+        "doc-a", "002 steps.pdf", [Chunk(0, "Apply online in 4 steps.")], [[1.0, 0, 0]]
+    )
+    await store.upsert(
+        "doc-b", "010 docs.pdf", [Chunk(0, "Bring Aadhaar and proof.")], [[0, 1.0, 0]]
+    )
+    service = KnowledgeService(
+        pool=None, store=store, embedder=TopicEmbedder(), translator=translator
+    )
+    tool = KnowledgeTool(service, limit=1)
+    records, results = [], []
+    tool.on_search(records.append)
+    q1 = "புது ஸ்மார்ட் கார்டு அப்ளை பண்றதுக்கு என்னென்ன ஸ்டெப்ஸ்?"
+    q2 = "என்னென்ன டாக்குமெண்ட்லாம் தேவை?"
+    await tool.handle(
+        Mock(
+            arguments={"questions": [q1, q2, q1]},  # duplicate is searched once
+            result_callback=AsyncMock(side_effect=lambda r: results.append(r)),
+        )
+    )
+    assert sorted(translator.calls) == sorted([q1, q2])  # Sarvam Translate gets the caller's words
+    assert [r.question for r in records] == [q1, q2]
+    [result] = results
+    assert result["found"] is True
+    assert [q["sources"] for q in result["questions"]] == [["002 steps.pdf"], ["010 docs.pdf"]]
+    assert {p["source"] for p in result["passages"]} == {"002 steps.pdf", "010 docs.pdf"}
+
+
+async def test_tool_still_accepts_a_single_question_string():
+    from unittest.mock import Mock
+
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    assert KnowledgeTool._questions({"question": " q "}) == ["q"]
+    assert KnowledgeTool._questions({"questions": "q"}) == ["q"]
+    assert KnowledgeTool._questions({"questions": ["a", "", "a", "b"]}) == ["a", "b"]
+    tool = KnowledgeTool(KnowledgeService(pool=None, store=FakeStore(), embedder=FakeEmbedder()))
+    results = []
+    await tool.handle(
+        Mock(arguments={"questions": []}, result_callback=AsyncMock(side_effect=results.append))
+    )
+    assert results == [{"found": False, "reason": "empty question"}]
+
+
+async def test_mayura_translates_in_colloquial_mode():
+    from voice_agent.knowledge.translate import SarvamTranslator
+
+    calls = []
+
+    class FakeText:
+        async def translate(self, **kwargs):
+            calls.append(kwargs)
+            return type("R", (), {"translated_text": "How do I remove my name?"})()
+
+    for model in ("mayura:v1", "sarvam-translate:v1"):
+        translator = SarvamTranslator("k", source_language="ta-IN", model=model)
+        translator._client = type("C", (), {"text": FakeText()})()
+        assert await translator.to_english("என் பேரை எப்படி நீக்குறது") == "How do I remove my name?"
+    assert calls[0]["mode"] == "modern-colloquial" and calls[0]["model"] == "mayura:v1"
+    assert "mode" not in calls[1]

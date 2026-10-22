@@ -461,7 +461,7 @@ async def test_langfuse_exporter_costs_translation_per_character(make_settings):
     )
     await exporter.close("completed")
     [gen] = [kw for k, kw in fake.calls if k == "generation" and kw["name"].endswith("translate")]
-    assert gen["model"] == "sarvam-translate:v1"
+    assert gen["model"] == "mayura:v1"
     assert gen["usage"] == {"input": len(question), "unit": "CHARACTERS"}
     assert gen["output"] == "What is needed?"
     assert not [kw for k, kw in fake.calls if k == "generation" and "embedding" in kw["name"]]

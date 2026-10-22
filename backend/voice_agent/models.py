@@ -184,13 +184,18 @@ _LLM_REASONING: dict[str, str] = {}
 
 TRANSLATE_MODELS: list[ModelOption] = [
     ModelOption(
-        "sarvam-translate:v1",
-        "Sarvam Translate v1",
-        "23 languages, formal",
+        "mayura:v1",
+        "Mayura v1",
+        "colloquial mode, faithful on spoken Tamil (8/8 in a test of real caller phrases)",
         recommended=True,
         price=_TRANSLATE,
     ),
-    ModelOption("mayura:v1", "Mayura v1", "11 languages, colloquial modes", price=_TRANSLATE),
+    ModelOption(
+        "sarvam-translate:v1",
+        "Sarvam Translate v1",
+        "23 languages, formal; invented a sentence on 1 of 8 spoken Tamil phrases",
+        price=_TRANSLATE,
+    ),
 ]
 
 EMBEDDING_MODELS: list[ModelOption] = [
