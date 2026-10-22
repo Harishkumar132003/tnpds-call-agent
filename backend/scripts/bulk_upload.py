@@ -76,10 +76,8 @@ def main() -> int:
                 print(f"[{i}/{len(files)}] {f.name}: FAILED {error}")
 
         status = api.get("/api/knowledge/status").json()
-        print(
-            print(f"\nindexed {done}, skipped {skipped}, failed {len(failed)}")
-            print(f"{status.get('points')} chunks in the collection now")
-        )
+        print(f"\nindexed {done}, skipped {skipped}, failed {len(failed)}")
+        print(f"{status.get('points')} chunks in the collection now")
         for name, error in failed:
             print(f"  failed: {name}: {error}")
 
