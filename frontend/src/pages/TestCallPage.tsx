@@ -194,7 +194,7 @@ export function TestCallPage() {
                 <div className="tc__link"><span /><span /><span /></div>
                 <div className={`tc__party${botSpeaking ? ' is-speaking' : ''}`}>
                   <div className="tc__avatar tc__avatar--bot"><Icon name="sparkle" size={18} /></div>
-                  <div className="tc__who">{config?.agent_name ?? 'Agent'}</div>
+                  <div className="tc__who">Agent</div>
                   <div className="tc__meter"><span style={{ width: `${Math.min(100, Math.round(botLevel * 100))}%` }} /></div>
                   <div className="tc__sub">{inCall ? (botSpeaking ? 'speaking' : 'thinking / listening') : 'not connected'}</div>
                 </div>

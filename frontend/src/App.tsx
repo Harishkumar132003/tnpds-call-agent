@@ -46,7 +46,6 @@ function Shell() {
         liveCalls={liveCalls}
         backendUp={backendUp}
         language={agent?.language ?? agent?.default_language ?? '…'}
-        agentName={agent?.agent_name ?? 'Agent'}
       />
       <div className="content">
         <Routes>

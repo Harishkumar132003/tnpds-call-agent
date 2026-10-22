@@ -201,7 +201,7 @@ export function ConfigPage() {
                 </div>
                 <div className="field">
                   <label className="field__label" htmlFor="greeting">Opening line <span className="muted">(optional, in {selected?.english_name ?? 'the selected language'})</span></label>
-                  <input id="greeting" className="field__input lang-select" style={{ maxWidth: 'none' }} value={draft.greeting} onChange={(e) => set('greeting', e.target.value)} placeholder="e.g. வணக்கம், நான் ஆஷா. நான் உங்களுக்கு எப்படி உதவலாம்?" />
+                  <input id="greeting" className="field__input lang-select" style={{ maxWidth: 'none' }} value={draft.greeting} onChange={(e) => set('greeting', e.target.value)} placeholder="e.g. வணக்கம். நான் உங்களுக்கு எப்படி உதவலாம்?" />
                   <span className="field__hint">Spoken instantly through TTS when the call connects. Leave empty to let the LLM greet.</span>
                 </div>
               </>

@@ -5,14 +5,13 @@ interface Props {
   liveCalls: number;
   backendUp: boolean;
   language: string;
-  agentName: string;
 }
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   isActive ? 'nav__item is-active' : 'nav__item';
 
 /** The collapsible rail from the Cube product, with this console's sections. */
-export function Sidebar({ liveCalls, backendUp, language, agentName }: Props) {
+export function Sidebar({ liveCalls, backendUp, language }: Props) {
   return (
     <aside className="rail">
       <div className="ws">
@@ -24,7 +23,7 @@ export function Sidebar({ liveCalls, backendUp, language, agentName }: Props) {
         </span>
         <span className="ws__text">
           <span className="ws__name">Voice agent</span>
-          <span className="ws__sub">{agentName} · {language}</span>
+          <span className="ws__sub">Agent · {language}</span>
         </span>
       </div>
 
@@ -65,9 +64,9 @@ export function Sidebar({ liveCalls, backendUp, language, agentName }: Props) {
       </nav>
 
       <div className="who">
-        <span className="who__avatar">{agentName.slice(0, 1).toUpperCase() || 'A'}</span>
+        <span className="who__avatar">A</span>
         <span className="who__text">
-          <span className="who__name">{agentName}</span>
+          <span className="who__name">Agent</span>
           <span className="who__sub">{backendUp ? 'tracking connected' : 'backend unreachable'}</span>
         </span>
       </div>
