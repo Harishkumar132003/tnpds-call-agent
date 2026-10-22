@@ -13,6 +13,7 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 
+from voice_agent.knowledge.rewrite import history_from_messages
 from voice_agent.knowledge.service import KnowledgeService
 
 TOOL_NAME = "search_knowledge_base"
@@ -76,6 +77,9 @@ class SearchRecord:
     """``{"source", "chunk_index", "score", "text", "used"}`` per retrieved chunk."""
     error: str | None = None
     at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    rewritten_query: str | None = None
+    rewrite_ms: int = 0
+    rewrite_tokens: tuple[int, int] = (0, 0)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +91,9 @@ class SearchRecord:
             "hits": self.hits,
             "error": self.error,
             "at": self.at,
+            "rewritten_query": self.rewritten_query,
+            "rewrite_ms": self.rewrite_ms,
+            "rewrite_tokens": list(self.rewrite_tokens),
         }
 
 
@@ -104,6 +111,8 @@ class KnowledgeTool:
     """Send every fetched sheet at or above this similarity."""
     keep_best: bool = True
     """If none reaches ``min_score``, send the single best one when it is above MIN_SCORE."""
+    rewrite_prompt: str | None = None
+    """KNOWLEDGE_QUERY_REWRITE: the rewrite prompt saved in the portal (None = built-in)."""
     listeners: list[SearchListener] = field(default_factory=list)
 
     def _selected(self, hits: list[Any]) -> list[Any]:
@@ -182,7 +191,9 @@ class KnowledgeTool:
             logger.warning(f"Knowledge: search failed for {question!r}: {error}")
             await self._notify(SearchRecord(question, None, 0, 0, 0, [], error=error[:300]))
             return []
-        if result.translated_query:
+        if result.rewritten_query:
+            logger.info(f"Knowledge: searching with the rewritten query {result.rewritten_query!r}")
+        elif result.translated_query:
             logger.info(
                 f"Knowledge: {question!r} translated in {result.translate_ms} ms -> "
                 f"{result.translated_query!r}"
@@ -221,9 +232,27 @@ class KnowledgeTool:
                 result.embed_ms,
                 result.search_ms,
                 hits_json,
+                rewritten_query=result.rewritten_query,
+                rewrite_ms=result.rewrite_ms,
+                rewrite_tokens=result.rewrite_tokens,
             )
         )
         return selected
+
+    async def _rewritten_outcomes(self, params: FunctionCallParams) -> list[tuple] | None:
+        """KNOWLEDGE_QUERY_REWRITE: one search from the caller's last messages (not the LLM's
+        questions). None when the rewrite fails, so the questions are translated instead."""
+        context = getattr(params, "context", None)
+        messages = getattr(context, "messages", None) if context is not None else None
+        caller = history_from_messages(messages if isinstance(messages, list) else [])
+        try:
+            result = await self.service.search_rewritten(
+                caller, prompt=self.rewrite_prompt, limit=self.limit
+            )
+        except Exception as exc:
+            logger.warning(f"Knowledge: rewritten search failed, translating instead: {exc}")
+            return None
+        return [(caller[-1], result, None)] if result else None
 
     async def handle(self, params: FunctionCallParams) -> None:
         questions = self._questions(params.arguments or {})
@@ -231,8 +260,10 @@ class KnowledgeTool:
             await params.result_callback({"found": False, "reason": "empty question"})
             return
         logger.info(f"Knowledge: LLM asked to search for {questions!r}")
-        # One search per question, in parallel: translation + embedding + Qdrant each
-        outcomes = await asyncio.gather(*(self._search_one(q) for q in questions))
+        outcomes = await self._rewritten_outcomes(params) if self.service.query_rewrite else None
+        if outcomes is None:
+            # One search per question, in parallel: translation + embedding + Qdrant each
+            outcomes = await asyncio.gather(*(self._search_one(q) for q in questions))
 
         per_question: list[dict[str, Any]] = []
         passages: list[dict[str, Any]] = []
@@ -261,7 +292,9 @@ class KnowledgeTool:
             per_question.append(
                 {
                     "question": question,
-                    "query_in_english": result.translated_query if result else None,
+                    "query_in_english": (result.rewritten_query or result.translated_query)
+                    if result
+                    else None,
                     "found": bool(sources),
                     "sources": sources,
                 }

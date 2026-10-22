@@ -236,6 +236,19 @@ def validate_service_configuration(settings: Settings) -> None:
         raise ConfigurationError(str(exc)) from exc
 
 
+def build_query_rewriter(settings: Settings):
+    """The context-aware query rewriter when KNOWLEDGE_QUERY_REWRITE is on, else None."""
+    if not settings.knowledge_query_rewrite:
+        return None
+    from voice_agent.knowledge.rewrite import QueryRewriter
+
+    return QueryRewriter(
+        settings.sarvam_api_key.get_secret_value(),
+        model=settings.llm_model,
+        timeout=settings.knowledge_rewrite_timeout_secs,
+    )
+
+
 def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
     """Retrieval for the agent; ``None`` when disabled or the embedding key is missing."""
     if not settings.knowledge_enabled or settings.openai_api_key is None:
@@ -261,6 +274,7 @@ def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
         pool=None,
         store=store,
         embedder=embedder,
+        rewriter=build_query_rewriter(settings),
         translator=SarvamTranslator(
             settings.sarvam_api_key.get_secret_value(),
             source_language=settings.agent_language,

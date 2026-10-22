@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import asyncpg
@@ -13,6 +13,7 @@ from loguru import logger
 from voice_agent.knowledge.chunk import chunk_text
 from voice_agent.knowledge.embeddings import Embedder
 from voice_agent.knowledge.extract import extract_text
+from voice_agent.knowledge.rewrite import QueryRewriter
 from voice_agent.knowledge.store import Hit, KnowledgeStore
 from voice_agent.knowledge.translate import Translator, needs_translation
 
@@ -45,6 +46,10 @@ class SearchResult:
     translated_query: str | None = None
     """English form of the question actually embedded, when it was translated."""
     translate_ms: int = 0
+    rewritten_query: str | None = None
+    """KNOWLEDGE_QUERY_REWRITE: the English query written from the caller's messages."""
+    rewrite_ms: int = 0
+    rewrite_tokens: tuple[int, int] = (0, 0)
 
 
 class KnowledgeService:
@@ -58,7 +63,9 @@ class KnowledgeService:
         chunk_chars: int = 1200,
         chunk_overlap: int = 200,
         whole_document: bool = False,
+        rewriter: QueryRewriter | None = None,
     ) -> None:
+        self._rewriter = rewriter
         self._pool = pool
         self._store = store
         self._embedder = embedder
@@ -70,6 +77,10 @@ class KnowledgeService:
     @property
     def qdrant_url(self) -> str:
         return self._store.url
+
+    @property
+    def query_rewrite(self) -> bool:
+        return self._rewriter is not None
 
     async def ping(self) -> bool:
         """True when Qdrant answers; used for start-up warnings."""
@@ -125,6 +136,35 @@ class KnowledgeService:
         t2 = time.monotonic()
         return SearchResult(
             hits, round((t1 - t0) * 1000), round((t2 - t1) * 1000), translated, translate_ms
+        )
+
+    async def search_rewritten(
+        self,
+        caller_messages: list[str],
+        *,
+        prompt: str | None = None,
+        limit: int = 5,
+        document_id: str | None = None,
+    ) -> SearchResult | None:
+        """KNOWLEDGE_QUERY_REWRITE: rewrite the caller's last messages into one English
+        question with everything they want now, and run today's search with it.
+        None when the rewrite fails, so the caller can fall back to translation."""
+        if self._rewriter is None:
+            return None
+        t = time.monotonic()
+        rewrite = await self._rewriter.rewrite(caller_messages, prompt)
+        rewrite_ms = round((time.monotonic() - t) * 1000)
+        if rewrite is None:
+            return None
+        logger.info(
+            f"Knowledge: rewrote the caller's messages in {rewrite_ms} ms -> {rewrite.query!r}"
+        )
+        result = await self.search(rewrite.query, limit=limit, document_id=document_id)
+        return replace(
+            result,
+            rewritten_query=rewrite.query,
+            rewrite_ms=rewrite_ms,
+            rewrite_tokens=(rewrite.prompt_tokens, rewrite.completion_tokens),
         )
 
     async def delete(self, document_id: str) -> bool:

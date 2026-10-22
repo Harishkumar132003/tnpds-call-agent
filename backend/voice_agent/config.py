@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     """Send every sheet whose similarity reaches this score (0.50 = 50% in the portal)."""
     knowledge_keep_best: bool = True
     """When no sheet reaches KNOWLEDGE_MIN_SCORE, still send the best one (if above 25%)."""
+    knowledge_query_rewrite: bool = False
+    """Rewrite each knowledge question + recent conversation into an English query first."""
+    knowledge_rewrite_timeout_secs: float = Field(default=3.0, gt=0)
     knowledge_chunk_chars: int = Field(default=1200, gt=100)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)
 

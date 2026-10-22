@@ -402,3 +402,131 @@ def test_selection_sends_everything_above_the_threshold_capped_with_a_fallback()
     assert tool._selected(hits(0.20)) == []
     strict = KnowledgeTool(service=None, min_score=0.50, keep_best=False)  # type: ignore[arg-type]
     assert strict._selected(hits(0.48, 0.45)) == []
+
+
+# ---------- query rewrite (KNOWLEDGE_QUERY_REWRITE) ----------
+
+
+def test_rewrite_input_is_only_the_callers_last_ten_messages():
+    from voice_agent.knowledge.rewrite import history_from_messages
+
+    messages = [
+        {"role": "system", "content": "prompt"},
+        {"role": "user", "content": "என்னோட நம்பரை ரிமூவ் பண்ணனும்"},
+        {"role": "assistant", "content": "Taluk office."},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+        {"role": "tool", "content": '{"passages": "sheet text"}'},
+        {"role": "user", "content": [{"type": "text", "text": "என் பேரை நீக்கணும்"}]},
+    ]
+    assert history_from_messages(messages) == ["என்னோட நம்பரை ரிமூவ் பண்ணனும்", "என் பேரை நீக்கணும்"]
+    many = [{"role": "user", "content": str(i)} for i in range(15)]
+    assert history_from_messages(many) == [str(i) for i in range(5, 15)]
+
+
+def test_rewrite_output_is_one_question():
+    from voice_agent.knowledge.rewrite import _query
+
+    assert _query('\n1. "steps and documents for new smart card application"\nextra') == (
+        "steps and documents for new smart card application"
+    )
+    assert _query("  \n") == ""
+
+
+def test_rewrite_input_separates_the_latest_message():
+    from voice_agent.knowledge.rewrite import rewrite_input
+
+    text = rewrite_input(["புது கார்டு வேணும்", "வயசானவங்க எப்படி வாங்குவாங்க?"])
+    context, latest = text.split("LATEST caller message")
+    assert "- புது கார்டு வேணும்" in context and "வயசானவங்க" not in context
+    assert "வயசானவங்க எப்படி வாங்குவாங்க?" in latest
+    assert "(none)" in rewrite_input(["only one"])
+
+
+class FakeRewriter:
+    def __init__(self, query):
+        self.query = query
+        self.calls = []
+
+    async def rewrite(self, caller_messages, prompt=None):
+        from voice_agent.knowledge.rewrite import Rewrite
+
+        self.calls.append((caller_messages, prompt))
+        return Rewrite(self.query, 120, 9) if self.query else None
+
+
+class RecordingEmbedder(FakeEmbedder):
+    async def embed(self, texts):
+        self.calls.append(texts)
+        return [[1.0, 0, 0] for _ in texts]
+
+
+async def test_rewrite_uses_callers_messages_not_the_llm_question():
+    from unittest.mock import Mock
+
+    from voice_agent.knowledge.chunk import Chunk
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    store, embedder = FakeStore(), RecordingEmbedder()
+    await store.upsert("d1", "002 new.pdf", [Chunk(0, "New card steps")], [[1.0, 0, 0]])
+    translator = FakeTranslator()
+    rewriter = FakeRewriter("steps and documents for new smart card application")
+    service = KnowledgeService(
+        pool=None, store=store, embedder=embedder, translator=translator, rewriter=rewriter
+    )
+    tool = KnowledgeTool(service, rewrite_prompt="custom prompt")
+    records, results = [], []
+    tool.on_search(records.append)
+    context = Mock(
+        messages=[
+            {"role": "user", "content": "புது கார்டு வேணும்"},
+            {"role": "assistant", "content": "சொல்லுங்க"},
+            {"role": "user", "content": "ஸ்டெப்ஸ் என்ன? டாக்குமெண்ட்ஸ் என்ன?"},
+        ]
+    )
+    await tool.handle(
+        Mock(
+            arguments={"questions": ["shortened by the LLM"]},
+            context=context,
+            result_callback=AsyncMock(side_effect=results.append),
+        )
+    )
+    # caller's messages only, and the saved prompt; the LLM's question is not used
+    assert rewriter.calls == [(["புது கார்டு வேணும்", "ஸ்டெப்ஸ் என்ன? டாக்குமெண்ட்ஸ் என்ன?"], "custom prompt")]
+    assert translator.calls == []
+    assert embedder.calls == [["steps and documents for new smart card application"]]  # one search
+    [record] = records
+    assert record.question == "ஸ்டெப்ஸ் என்ன? டாக்குமெண்ட்ஸ் என்ன?"
+    assert record.rewritten_query == "steps and documents for new smart card application"
+    assert record.rewrite_tokens == (120, 9)
+    assert results[0]["passages"][0]["source"] == "002 new.pdf"
+
+
+async def test_rewrite_failure_translates_the_llm_questions_instead():
+    from unittest.mock import Mock
+
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    translator = FakeTranslator()
+    service = KnowledgeService(
+        pool=None,
+        store=FakeStore(),
+        embedder=FakeEmbedder(),
+        translator=translator,
+        rewriter=FakeRewriter(None),
+    )
+    await KnowledgeTool(service).handle(
+        Mock(
+            arguments={"questions": ["ஆதார் தேவையா?"]},
+            context=Mock(messages=[{"role": "user", "content": "ஆதார் தேவையா?"}]),
+            result_callback=AsyncMock(),
+        )
+    )
+    assert translator.calls == ["ஆதார் தேவையா?"]
+
+
+async def test_flag_off_keeps_todays_search():
+    service = KnowledgeService(pool=None, store=FakeStore(), embedder=FakeEmbedder())
+    assert not service.query_rewrite
+    assert await service.search_rewritten(["x"]) is None
+    result = await service.search("Is Aadhaar needed?", limit=2)
+    assert result.rewritten_query is None and result.rewrite_ms == 0

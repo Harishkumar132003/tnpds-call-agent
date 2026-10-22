@@ -63,6 +63,7 @@ async def run_voice_session(
             limit=settings.knowledge_top_k,
             min_score=settings.knowledge_min_score,
             keep_best=settings.knowledge_keep_best,
+            rewrite_prompt=config.rewrite_prompt,
         )
         if knowledge_service
         else None

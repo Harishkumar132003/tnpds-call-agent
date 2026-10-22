@@ -19,6 +19,7 @@ alter table agent_config add column if not exists idle_prompt_secs double precis
 alter table agent_config add column if not exists idle_check_line text;
 alter table agent_config add column if not exists idle_goodbye_line text;
 alter table agent_config add column if not exists knowledge_prompt text;
+alter table agent_config add column if not exists rewrite_prompt text;
 alter table agent_config add column if not exists pronunciations jsonb;
 alter table agent_config add column if not exists tts_dict_id text;
 alter table agent_config add column if not exists stt_model text;

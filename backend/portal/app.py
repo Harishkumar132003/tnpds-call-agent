@@ -19,6 +19,7 @@ from voice_agent import models as catalogue
 from voice_agent.config import Settings
 from voice_agent.knowledge.embeddings import OpenAIEmbedder
 from voice_agent.knowledge.extract import SUPPORTED_EXTENSIONS, UnsupportedFileError
+from voice_agent.knowledge.rewrite import DEFAULT_REWRITE_PROMPT
 from voice_agent.knowledge.service import EmptyDocumentError, KnowledgeService
 from voice_agent.knowledge.store import KnowledgeStore
 from voice_agent.knowledge.tool import PROMPT_ADDITION
@@ -100,6 +101,8 @@ class SearchIn(BaseModel):
     question: str
     limit: int = 5
     document_id: str | None = None
+    history: list[str] | None = None
+    """Query rewrite: the caller's earlier messages, oldest first."""
 
 
 class ConfigIn(BaseModel):
@@ -111,6 +114,8 @@ class ConfigIn(BaseModel):
     idle_check_line: str | None = None
     idle_goodbye_line: str | None = None
     knowledge_prompt: str | None = None
+    rewrite_prompt: str | None = None
+    """None keeps the active version's rewrite prompt; "" resets it to the built-in text."""
     pronunciations: str | None = None
     """``word = spoken form`` lines; None keeps the active version's dictionary."""
     stt_model: str | None = None
@@ -229,6 +234,9 @@ def create_app(
                 "embedding": knowledge.embedding_model if knowledge else "text-embedding-3-small",
             },
             "knowledge_prompt_default": PROMPT_ADDITION.strip(),
+            "rewrite_prompt": config.rewrite_prompt,
+            "rewrite_prompt_default": DEFAULT_REWRITE_PROMPT,
+            "query_rewrite_on": bool(knowledge and knowledge.knowledge_query_rewrite),
             "knowledge_on": bool(
                 knowledge and knowledge.knowledge_enabled and knowledge.openai_api_key
             ),
@@ -348,6 +356,11 @@ def create_app(
             idle_check_line=(body.idle_check_line or "").strip() or None,
             idle_goodbye_line=(body.idle_goodbye_line or "").strip() or None,
             knowledge_prompt=(body.knowledge_prompt or "").strip() or None,
+            rewrite_prompt=(
+                active.rewrite_prompt
+                if body.rewrite_prompt is None
+                else body.rewrite_prompt.strip() or None
+            ),
             pronunciations=pronunciations,
             tts_dict_id=dict_id,
             **models,
@@ -488,17 +501,30 @@ def create_app(
     async def api_knowledge_search(request: Request, body: SearchIn):
         if not body.question.strip():
             raise HTTPException(422, "question is empty")
-        result = await knowledge_service(request).search(
-            body.question.strip(),
-            limit=max(1, min(body.limit, 20)),
-            document_id=body.document_id or None,
-        )
+        service = knowledge_service(request)
+        limit = max(1, min(body.limit, 20))
+        result = None
+        if service.query_rewrite:  # same as on calls: caller's messages -> rewrite -> search
+            caller = [str(m) for m in (body.history or [])] + [body.question.strip()]
+            config = await load_active_config(pool(request))
+            result = await service.search_rewritten(
+                caller[-10:],
+                prompt=config.rewrite_prompt,
+                limit=limit,
+                document_id=body.document_id or None,
+            )
+        if result is None:
+            result = await service.search(
+                body.question.strip(), limit=limit, document_id=body.document_id or None
+            )
         return {
             "hits": [h.__dict__ for h in result.hits],
             "embed_ms": result.embed_ms,
             "search_ms": result.search_ms,
             "translate_ms": result.translate_ms,
             "translated_query": result.translated_query,
+            "rewritten_query": result.rewritten_query,
+            "rewrite_ms": result.rewrite_ms,
         }
 
     _mount_frontend(app)
@@ -581,10 +607,13 @@ def _build_knowledge(
     )
     if embedder is None:
         return store, None
+    from voice_agent.services import build_query_rewriter
+
     service = KnowledgeService(
         pool=pool,
         store=store,
         embedder=embedder,
+        rewriter=build_query_rewriter(settings),
         translator=SarvamTranslator(
             settings.sarvam_api_key.get_secret_value(), source_language=settings.agent_language
         ),

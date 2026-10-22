@@ -70,10 +70,17 @@ function Searches({ searches }: { searches: TurnSearch[] }) {
         <div className="kb__search" key={`${s.at}-${i}`}>
           <div className="kb__head">
             <Icon name="search" size={13} />
-            <span className="kb__q">Searched for <strong>{s.question}</strong></span>
-            {s.translated_query && <span className="kb__q muted">→ {s.translated_query}</span>}
+            {s.rewritten_query ? (
+              // query rewrite: show only the question that was actually searched
+              <span className="kb__q">Searched for <strong>{s.rewritten_query}</strong></span>
+            ) : (
+              <>
+                <span className="kb__q">Searched for <strong>{s.question}</strong></span>
+                {s.translated_query && <span className="kb__q muted">→ {s.translated_query}</span>}
+              </>
+            )}
             <span className="topbar__spacer" />
-            <span className="kb__meta">{s.translate_ms > 0 ? `translate ${s.translate_ms} ms · ` : ''}embed {s.embed_ms} ms · search {s.search_ms} ms</span>
+            <span className="kb__meta">{s.rewrite_ms ? `rewrite ${s.rewrite_ms} ms · ` : ''}{s.translate_ms > 0 ? `translate ${s.translate_ms} ms · ` : ''}embed {s.embed_ms} ms · search {s.search_ms} ms</span>
           </div>
           {s.error && <div className="banner banner--error">search failed: {s.error}</div>}
           {s.hits.map((h) => {

@@ -171,6 +171,24 @@ class LangfuseExporter:
                     usage={"input": len(question), "unit": "CHARACTERS"},
                     metadata={"translate_ms": search.get("translate_ms")},
                 )
+            # Query rewrite: an LLM call, costed per token
+            prompt_tokens, completion_tokens = (search.get("rewrite_tokens") or [0, 0])[:2]
+            if search.get("rewritten_query") and prompt_tokens + completion_tokens:
+                span.generation(
+                    name=f"{name} rewrite",
+                    model=s.llm_model,
+                    start_time=start,
+                    end_time=end,
+                    input=question,
+                    output=search.get("rewritten_query"),
+                    usage={
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "total": prompt_tokens + completion_tokens,
+                        "unit": "TOKENS",
+                    },
+                    metadata={"rewrite_ms": search.get("rewrite_ms")},
+                )
         usage = None
         if turn.prompt_tokens is not None or turn.completion_tokens is not None:
             usage = {

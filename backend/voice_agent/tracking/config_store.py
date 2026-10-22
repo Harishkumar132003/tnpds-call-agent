@@ -29,6 +29,8 @@ class AgentConfig:
     idle_goodbye_line: str | None = None
     knowledge_prompt: str | None = None
     """Rules appended to the prompt when the search tool is on; None = built-in text."""
+    rewrite_prompt: str | None = None
+    """KNOWLEDGE_QUERY_REWRITE: the rewrite instructions; None = built-in text."""
     pronunciations: list[dict[str, str]] | None = None
     """``[{"word", "spoken"}]`` entries of the Sarvam pronunciation dictionary."""
     tts_dict_id: str | None = None
@@ -53,6 +55,7 @@ async def load_active_config(pool: asyncpg.Pool | None) -> AgentConfig:
                 conn.fetchrow(
                     "select id, system_prompt, temperature, language, greeting, "
                     "idle_prompt_secs, idle_check_line, idle_goodbye_line, knowledge_prompt, "
+                    "rewrite_prompt, "
                     "pronunciations::text as pronunciations, tts_dict_id, "
                     "stt_model, llm_model, tts_model, tts_speaker, translate_model, "
                     "embedding_model "
@@ -75,6 +78,7 @@ async def load_active_config(pool: asyncpg.Pool | None) -> AgentConfig:
         idle_check_line=row["idle_check_line"],
         idle_goodbye_line=row["idle_goodbye_line"],
         knowledge_prompt=row["knowledge_prompt"],
+        rewrite_prompt=row["rewrite_prompt"],
         pronunciations=json.loads(row["pronunciations"]) if row["pronunciations"] else None,
         tts_dict_id=row["tts_dict_id"],
         stt_model=row["stt_model"],
@@ -106,6 +110,7 @@ async def save_config(
     tts_speaker: str | None = None,
     translate_model: str | None = None,
     embedding_model: str | None = None,
+    rewrite_prompt: str | None = None,
 ) -> int:
     """Store a new config version and return its id."""
     async with pool.acquire() as conn:
@@ -114,9 +119,9 @@ async def save_config(
             "idle_prompt_secs, idle_check_line, idle_goodbye_line, knowledge_prompt, "
             "pronunciations, tts_dict_id, "
             "stt_model, llm_model, tts_model, tts_speaker, translate_model, "
-            "embedding_model) "
+            "embedding_model, rewrite_prompt) "
             "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, "
-            "$11, $12, $13, $14, $15, $16, $17) "
+            "$11, $12, $13, $14, $15, $16, $17, $18) "
             "returning id",
             system_prompt,
             temperature,
@@ -135,6 +140,7 @@ async def save_config(
             tts_speaker,
             translate_model,
             embedding_model,
+            rewrite_prompt,
         )
 
 
@@ -142,7 +148,7 @@ async def list_config_history(pool: asyncpg.Pool, limit: int = 20) -> list[dict]
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "select id, system_prompt, temperature, language, greeting, idle_prompt_secs, "
-            "idle_check_line, idle_goodbye_line, knowledge_prompt, "
+            "idle_check_line, idle_goodbye_line, knowledge_prompt, rewrite_prompt, "
             "pronunciations::text as pronunciations, tts_dict_id, "
             "stt_model, llm_model, tts_model, tts_speaker, translate_model, embedding_model, "
             "note, created_at "

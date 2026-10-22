@@ -60,6 +60,9 @@ export interface TurnSearch {
   search_ms: number;
   error: string | null;
   at: string;
+  /** KNOWLEDGE_QUERY_REWRITE: the context-aware English query that was searched. */
+  rewritten_query?: string | null;
+  rewrite_ms?: number;
   hits: { source: string; document_id?: string; chunk_index: number; score: number; text: string; used: boolean }[];
 }
 
@@ -96,6 +99,10 @@ export interface AgentConfig {
   /** Rules appended to the prompt when the search tool is on; null = built-in text. */
   knowledge_prompt: string | null;
   knowledge_prompt_default: string;
+  /** KNOWLEDGE_QUERY_REWRITE: saved rewrite instructions (null = built-in) and whether the flag is on. */
+  rewrite_prompt: string | null;
+  rewrite_prompt_default: string;
+  query_rewrite_on: boolean;
   knowledge_on: boolean;
   /** Pronunciation dictionary as "word = spoken form" lines, and its Sarvam id. */
   pronunciations: string;
@@ -126,6 +133,7 @@ export interface ConfigVersion {
   idle_check_line: string | null;
   idle_goodbye_line: string | null;
   knowledge_prompt: string | null;
+  rewrite_prompt?: string | null;
   pronunciations: { word: string; spoken: string }[] | null;
   tts_dict_id: string | null;
   stt_model: string | null;
@@ -205,6 +213,8 @@ export interface KnowledgeSearch {
   translate_ms: number;
   /** English form of the question that was embedded, when it was translated. */
   translated_query: string | null;
+  rewritten_query?: string | null;
+  rewrite_ms?: number;
 }
 
 export interface TestCallInfo {

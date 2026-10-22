@@ -144,11 +144,15 @@ export function KnowledgePage() {
                 </div>
                 <div className="form-actions">
                   <button type="submit" className="btn btn--primary" disabled={!ready || searching || !question.trim()}>{searching ? 'Searching…' : 'Find relevant chunks'}</button>
-                  {result && <span className="card__note">{result.translate_ms > 0 ? `translate ${result.translate_ms} ms · ` : ''}embed {result.embed_ms} ms · search {result.search_ms} ms</span>}
+                  {result && <span className="card__note">{result.rewrite_ms ? `rewrite ${result.rewrite_ms} ms · ` : ''}{result.translate_ms > 0 ? `translate ${result.translate_ms} ms · ` : ''}embed {result.embed_ms} ms · search {result.search_ms} ms</span>}
                 </div>
               </form>
             </div>
-            {result?.translated_query && (
+            {result?.rewritten_query ? (
+              <div className="card__body" style={{ paddingTop: 0 }}>
+                <span className="card__note">Rewritten as: <strong>{result.rewritten_query}</strong> <span className="muted">(context-aware rewrite with sarvam-105b, the same way the agent does on calls)</span></span>
+              </div>
+            ) : result?.translated_query && (
               <div className="card__body" style={{ paddingTop: 0 }}>
                 <span className="card__note">Searched as: <strong>{result.translated_query}</strong> <span className="muted">(translated with Sarvam, the same way the agent does on calls)</span></span>
               </div>

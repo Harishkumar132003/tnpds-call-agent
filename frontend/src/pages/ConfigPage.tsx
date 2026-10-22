@@ -5,8 +5,8 @@ import { api } from '../api';
 import { when } from '../format';
 import type { AgentConfig, ConfigVersion } from '../types';
 
-type Section = 'language' | 'idle' | 'prompt' | 'knowledge';
-const SECTION_LABEL: Record<Section, string> = { language: 'Language & opening line', idle: 'Idle handling', prompt: 'Prompt & temperature', knowledge: 'Knowledge rules' };
+type Section = 'language' | 'idle' | 'prompt' | 'knowledge' | 'rewrite';
+const SECTION_LABEL: Record<Section, string> = { language: 'Language & opening line', idle: 'Idle handling', prompt: 'Prompt & temperature', knowledge: 'Knowledge rules', rewrite: 'Query rewrite prompt' };
 
 /** Everything a version stores; a section save changes only its own fields. */
 interface Draft {
@@ -19,6 +19,7 @@ interface Draft {
   useTemp: boolean;
   temp: number;
   knowledgePrompt: string;
+  rewritePrompt: string;
 }
 
 /** Built-in idle values for a language: what runs when nothing is stored. */
@@ -44,6 +45,7 @@ function draftFrom(c: AgentConfig): Draft {
     useTemp: c.temperature !== null,
     temp: c.temperature ?? 0.7,
     knowledgePrompt: c.knowledge_prompt ?? c.knowledge_prompt_default,
+    rewritePrompt: c.rewrite_prompt ?? c.rewrite_prompt_default,
   };
 }
 
@@ -62,7 +64,7 @@ export function ConfigPage() {
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [history, setHistory] = useState<ConfigVersion[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [notes, setNotes] = useState<Record<Section, string>>({ language: '', idle: '', prompt: '', knowledge: '' });
+  const [notes, setNotes] = useState<Record<Section, string>>({ language: '', idle: '', prompt: '', knowledge: '', rewrite: '' });
   const [saving, setSaving] = useState<Section | null>(null);
   const [preview, setPreview] = useState<{ prompt: string; error: string | null }>({ prompt: '', error: null });
   const [open, setOpen] = useState<number | null>(null);
@@ -100,8 +102,10 @@ export function ConfigPage() {
     idle: draft.idleSecs.trim() !== saved.idleSecs || draft.idleCheck.trim() !== saved.idleCheck.trim() || draft.idleBye.trim() !== saved.idleBye.trim(),
     prompt: draft.prompt.trim() !== saved.prompt.trim() || draft.useTemp !== saved.useTemp || (draft.useTemp && draft.temp !== saved.temp),
     knowledge: draft.knowledgePrompt.trim() !== saved.knowledgePrompt.trim(),
+    rewrite: draft.rewritePrompt.trim() !== saved.rewritePrompt.trim(),
   };
   const knowledgeIsDefault = draft.knowledgePrompt.trim() === config.knowledge_prompt_default.trim();
+  const rewriteIsDefault = draft.rewritePrompt.trim() === config.rewrite_prompt_default.trim();
 
   /** Build the full version body: the saved values everywhere, except the section being saved. */
   const bodyFor = (section: Section) => {
@@ -120,6 +124,8 @@ export function ConfigPage() {
       idle_check_line: !d.idleCheck.trim() || d.idleCheck.trim() === defaults.check ? null : d.idleCheck.trim(),
       idle_goodbye_line: !d.idleBye.trim() || d.idleBye.trim() === defaults.bye ? null : d.idleBye.trim(),
       knowledge_prompt: !d.knowledgePrompt.trim() || d.knowledgePrompt.trim() === config.knowledge_prompt_default.trim() ? null : d.knowledgePrompt.trim(),
+      // only this section changes the rewrite prompt; "" (empty or equal to the built-in) = built-in
+      rewrite_prompt: section !== 'rewrite' ? null : !draft.rewritePrompt.trim() || rewriteIsDefault ? '' : draft.rewritePrompt.trim(),
       // the Sarvam dictionary is managed on the Pronunciation page; null keeps the active one
       pronunciations: null,
       // models are managed on the Models page; the active version's choices are kept
@@ -159,8 +165,9 @@ export function ConfigPage() {
       useTemp: v.temperature !== null,
       temp: v.temperature ?? 0.7,
       knowledgePrompt: v.knowledge_prompt ?? config.knowledge_prompt_default,
+      rewritePrompt: v.rewrite_prompt ?? config.rewrite_prompt_default,
     });
-    setNotes({ language: `restored from #${v.id}`, idle: `restored from #${v.id}`, prompt: `restored from #${v.id}`, knowledge: `restored from #${v.id}` });
+    setNotes({ language: `restored from #${v.id}`, idle: `restored from #${v.id}`, prompt: `restored from #${v.id}`, knowledge: `restored from #${v.id}`, rewrite: `restored from #${v.id}` });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -277,6 +284,21 @@ export function ConfigPage() {
                 </span>
               </div>
             ))}
+
+            {config.query_rewrite_on && card('rewrite', (
+              <>
+                <span className="card__label">Query rewrite prompt (knowledge search)</span>
+                <span className="topbar__spacer" />
+                {rewriteIsDefault ? <span className="pill pill--idle">default</span> : <button type="button" className="btn btn--quiet" onClick={() => set('rewritePrompt', config.rewrite_prompt_default)}>reset to default</button>}
+              </>
+            ), (
+              <div className="field">
+                <textarea className="field__textarea" rows={12} value={draft.rewritePrompt} onChange={(e) => set('rewritePrompt', e.target.value)} />
+                <span className="field__hint">
+                  Instructions for the rewrite step before each knowledge search. It receives only the caller's last 10 messages (oldest first) and must reply with one English search query per line, one for each question in the latest message. Shown because KNOWLEDGE_QUERY_REWRITE is on.
+                </span>
+              </div>
+            ))}
           </div>
 
           <div className="stack">
@@ -301,7 +323,7 @@ export function ConfigPage() {
                     <div className="list__row" key={v.id}>
                       <button type="button" className="list__open" onClick={() => setOpen(open === v.id ? null : v.id)}>
                         <div className="list__name">#{v.id} {v.id === config.id && <span className="pill pill--up">active</span>} {v.note && <span className="card__note">· {v.note}</span>}</div>
-                        <div className="list__meta">{when(v.created_at)} · {langName(v.language)} · temp {v.temperature ?? 'default'} · {v.system_prompt ? `${v.system_prompt.length} chars` : 'built-in prompt'}{v.greeting ? ' · fixed greeting' : ''}{v.idle_prompt_secs !== null ? ` · idle ${v.idle_prompt_secs}s` : ''}{v.knowledge_prompt ? ' · custom knowledge rules' : ''}{v.pronunciations?.length ? ` · ${v.pronunciations.length} pronunciations` : ''}{[v.stt_model, v.llm_model, v.tts_model, v.tts_speaker, v.translate_model].some(Boolean) ? ` · models: ${[v.stt_model, v.llm_model, v.tts_model && v.tts_speaker ? `${v.tts_model}/${v.tts_speaker}` : v.tts_model || v.tts_speaker, v.translate_model].filter(Boolean).join(', ')}` : ''}</div>
+                        <div className="list__meta">{when(v.created_at)} · {langName(v.language)} · temp {v.temperature ?? 'default'} · {v.system_prompt ? `${v.system_prompt.length} chars` : 'built-in prompt'}{v.greeting ? ' · fixed greeting' : ''}{v.idle_prompt_secs !== null ? ` · idle ${v.idle_prompt_secs}s` : ''}{v.knowledge_prompt ? ' · custom knowledge rules' : ''}{v.rewrite_prompt ? ' · custom rewrite prompt' : ''}{v.pronunciations?.length ? ` · ${v.pronunciations.length} pronunciations` : ''}{[v.stt_model, v.llm_model, v.tts_model, v.tts_speaker, v.translate_model].some(Boolean) ? ` · models: ${[v.stt_model, v.llm_model, v.tts_model && v.tts_speaker ? `${v.tts_model}/${v.tts_speaker}` : v.tts_model || v.tts_speaker, v.translate_model].filter(Boolean).join(', ')}` : ''}</div>
                         {open === v.id && v.system_prompt && <pre className="preview-prompt" style={{ marginTop: 8 }}>{v.system_prompt}</pre>}
                       </button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => restore(v)}>Restore</button>

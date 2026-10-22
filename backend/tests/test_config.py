@@ -114,3 +114,7 @@ def test_langfuse_configured_needs_all_three(make_settings):
     )
     assert langfuse_configured(make_settings(langfuse_enabled=True, **full))
     assert not langfuse_configured(make_settings(langfuse_enabled=False, **full))
+
+
+def test_query_rewrite_is_off_by_default(settings):
+    assert settings.knowledge_query_rewrite is False

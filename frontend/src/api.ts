@@ -68,6 +68,8 @@ export const api = {
     idle_check_line: string | null;
     idle_goodbye_line: string | null;
     knowledge_prompt: string | null;
+    /** null keeps the saved rewrite prompt; "" resets it to the built-in text */
+    rewrite_prompt?: string | null;
     pronunciations?: string | null;
     stt_model?: string | null;
     llm_model?: string | null;
