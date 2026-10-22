@@ -1,55 +1,64 @@
-"""Register Sarvam model prices in a Langfuse project so traces get costs.
+"""Register a Langfuse price for every model on the portal's Models page.
 
-Prices are Sarvam's INR list prices; Langfuse prints them with a "$" sign but
-the numbers are rupees. Idempotent: existing definitions with the same name
-are left alone (delete them in Settings -> Models to re-create).
+The list comes from the catalogue (voice_agent/models.py), so a model added
+there is priced here with no other change. Prices are Sarvam's INR list
+prices; Langfuse prints a "$" sign, but the numbers are rupees. OpenAI
+embedding models are not priced: their cost is not tracked.
 
-    uv run python scripts/langfuse_models.py                 # uses LANGFUSE_* from .env
+    uv run python scripts/langfuse_models.py                       # LANGFUSE_* from .env
     uv run python scripts/langfuse_models.py --host https://langfuse.wizzgeeks.com
+    uv run python scripts/langfuse_models.py --update              # also fix changed prices
+    uv run python scripts/langfuse_models.py --dry-run             # show, change nothing
+
+Without --update, existing definitions are left alone and differences are
+reported. Prices apply to traces ingested after they exist.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
-MODELS = [
-    {
-        "modelName": "sarvam-105b",
-        "matchPattern": "(?i)^(sarvam-105b)$",
-        "unit": "TOKENS",
-        "inputPrice": 0.000015,  # ₹15 per 1M input tokens
-        "outputPrice": 0.00006,  # ₹60 per 1M output tokens
-    },
-    {
-        "modelName": "bulbul:v3",
-        "matchPattern": "(?i)^(bulbul:v3)$",
-        "unit": "CHARACTERS",
-        "outputPrice": 0.003,  # ₹30 per 10k characters
-    },
-    {
-        "modelName": "sarvam-translate:v1",
-        "matchPattern": "(?i)^(sarvam-translate:v1)$",
-        "unit": "CHARACTERS",
-        "inputPrice": 0.002,  # ₹2 per 1,000 characters (pay as you go)
-    },
-    {
-        "modelName": "mayura:v1",
-        "matchPattern": "(?i)^(mayura:v1)$",
-        "unit": "CHARACTERS",
-        "inputPrice": 0.002,  # same translate rate
-    },
-    {
-        "modelName": "saaras:v4",
-        "matchPattern": "(?i)^(saaras:v4)$",
-        "unit": "SECONDS",
-        "inputPrice": 0.008333,  # ₹30 per hour of audio
-    },
-]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from voice_agent.models import all_models  # noqa: E402
+
+
+def definitions() -> list[dict]:
+    seen: dict[str, dict] = {}
+    for model in all_models():
+        price = model.price
+        if price is None or model.id in seen:
+            continue
+        body = {
+            "modelName": model.id,
+            "matchPattern": f"(?i)^({re.escape(model.id)})$",
+            "unit": price.unit,
+        }
+        if price.input is not None:
+            body["inputPrice"] = round(price.input, 12)
+        if price.output is not None:
+            body["outputPrice"] = round(price.output, 12)
+        body["_source"] = price.source
+        seen[model.id] = body
+    return list(seen.values())
+
+
+def _same(existing: dict, wanted: dict) -> bool:
+    if existing.get("unit") != wanted.get("unit"):
+        return False
+    for key in ("inputPrice", "outputPrice"):
+        a, b = existing.get(key), wanted.get(key)
+        if (a is None) != (b is None):
+            return False
+        if a is not None and abs(float(a) - float(b)) > 1e-12:
+            return False
+    return True
 
 
 def main() -> int:
@@ -58,25 +67,48 @@ def main() -> int:
     ap.add_argument("--host", default=os.environ.get("LANGFUSE_HOST"))
     ap.add_argument("--public-key", default=os.environ.get("LANGFUSE_PUBLIC_KEY"))
     ap.add_argument("--secret-key", default=os.environ.get("LANGFUSE_SECRET_KEY"))
+    ap.add_argument("--update", action="store_true", help="replace definitions whose price changed")
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    wanted = definitions()
+    if args.dry_run:
+        for d in wanted:
+            print(
+                f"  {d['modelName']:<24} {d['unit']:<10} in={d.get('inputPrice')} "
+                f"out={d.get('outputPrice')}  ({d['_source']})"
+            )
+        return 0
     if not (args.host and args.public_key and args.secret_key):
         print("need --host/--public-key/--secret-key or LANGFUSE_HOST/_PUBLIC_KEY/_SECRET_KEY")
         return 2
 
     auth = (args.public_key, args.secret_key)
     with httpx.Client(base_url=args.host.rstrip("/"), auth=auth, timeout=30) as client:
-        health = client.get("/api/public/health")
-        print(f"{args.host}: {health.json().get('status')} (v{health.json().get('version')})")
+        health = client.get("/api/public/health").json()
+        print(f"{args.host}: {health.get('status')} (v{health.get('version')})")
         existing = {
-            m["modelName"] for m in client.get("/api/public/models?limit=100").json()["data"]
+            m["modelName"]: m
+            for m in client.get("/api/public/models?limit=100").json()["data"]
+            if not m.get("isLangfuseManaged")
         }
-        for model in MODELS:
-            if model["modelName"] in existing:
-                print(f"  {model['modelName']:<12} already defined")
+        for d in wanted:
+            name, body = d["modelName"], {k: v for k, v in d.items() if not k.startswith("_")}
+            current = existing.get(name)
+            if current and _same(current, body):
+                print(f"  {name:<24} up to date")
                 continue
-            r = client.post("/api/public/models", json=model)
-            r.raise_for_status()
-            print(f"  {model['modelName']:<12} created ({model['unit']})")
+            if current and not args.update:
+                print(
+                    f"  {name:<24} DIFFERS (in={current.get('inputPrice')} "
+                    f"out={current.get('outputPrice')}); rerun with --update to replace"
+                )
+                continue
+            if current:
+                client.delete(f"/api/public/models/{current['id']}").raise_for_status()
+            client.post("/api/public/models", json=body).raise_for_status()
+            verb = "replaced" if current else "created"
+            print(f"  {name:<24} {verb} ({body['unit']}, {d['_source']})")
     return 0
 
 

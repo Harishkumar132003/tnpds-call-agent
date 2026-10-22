@@ -450,7 +450,11 @@ async def test_langfuse_exporter_costs_translation_per_character(make_settings):
             user_text=question,
             assistant_text="a",
             searches=[
-                {"question": question, "translated_query": "What is needed?", "hits": []},
+                {
+                    "question": question,
+                    "translated_query": "What is needed?",
+                    "hits": [],
+                },
                 {"question": "already English", "translated_query": None, "hits": []},
             ],
         )
@@ -460,3 +464,4 @@ async def test_langfuse_exporter_costs_translation_per_character(make_settings):
     assert gen["model"] == "sarvam-translate:v1"
     assert gen["usage"] == {"input": len(question), "unit": "CHARACTERS"}
     assert gen["output"] == "What is needed?"
+    assert not [kw for k, kw in fake.calls if k == "generation" and "embedding" in kw["name"]]

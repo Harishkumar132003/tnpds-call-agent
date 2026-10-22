@@ -107,3 +107,27 @@ def test_build_tts_accepts_v4_flash(settings):
     )
     tts = build_tts(s)
     assert tts._settings.model == "bulbul:v4-flash" and tts._settings.voice == "aravind_ta_ads"
+
+
+def test_every_sarvam_model_has_a_price_and_openai_none():
+    embedding = {m.id for m in catalogue.EMBEDDING_MODELS}
+    missing = [m.id for m in catalogue.all_models() if m.price is None and m.id not in embedding]
+    assert missing == []
+    assert all(m.price is None for m in catalogue.EMBEDDING_MODELS)
+
+
+def test_price_definitions_cover_the_sarvam_models():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "langfuse_models", Path(__file__).parent.parent / "scripts/langfuse_models.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    defs = {d["modelName"]: d for d in module.definitions()}
+    assert set(defs) == {m.id for m in catalogue.all_models() if m.price is not None}
+    assert "text-embedding-3-small" not in defs
+    assert defs["bulbul:v4-flash"]["outputPrice"] == 0.002
+    assert defs["sarvam-translate:v1"]["unit"] == "CHARACTERS"
+    assert defs["saaras:v3"]["inputPrice"] == defs["saaras:v4"]["inputPrice"]

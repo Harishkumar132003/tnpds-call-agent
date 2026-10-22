@@ -20,12 +20,32 @@ ALL_LANGUAGES = frozenset(supported_language_codes())
 
 
 @dataclass(frozen=True)
+class Price:
+    """List price per unit, for Langfuse cost (scripts/langfuse_models.py).
+
+    ``unit`` is Langfuse's usage unit (TOKENS, CHARACTERS, SECONDS). Amounts are
+    in rupees per single unit.
+    """
+
+    unit: str
+    input: float | None = None
+    output: float | None = None
+    source: str = ""
+
+
+# Sarvam pay-as-you-go list prices (sarvam.ai/api-pricing, checked 2026-10-22)
+_STT = Price("SECONDS", input=0.49 / 60, source="₹0.49 per minute")
+_TRANSLATE = Price("CHARACTERS", input=0.002, source="₹2.00 per 1,000 characters")
+
+
+@dataclass(frozen=True)
 class ModelOption:
     id: str
     label: str
     note: str
     languages: frozenset[str] = ALL_LANGUAGES
     recommended: bool = False
+    price: Price | None = None
 
     def supports(self, language: str) -> bool:
         return language in self.languages
@@ -50,8 +70,14 @@ class Speaker:
 
 
 STT_MODELS: list[ModelOption] = [
-    ModelOption("saaras:v4", "Saaras v4", "current, recommended: 23 languages", recommended=True),
-    ModelOption("saaras:v3", "Saaras v3", "previous generation, still served"),
+    ModelOption(
+        "saaras:v4",
+        "Saaras v4",
+        "current, recommended: 23 languages",
+        recommended=True,
+        price=_STT,
+    ),
+    ModelOption("saaras:v3", "Saaras v3", "previous generation, still served", price=_STT),
 ]
 
 _V4_FLASH_LANGUAGE = {
@@ -91,12 +117,14 @@ TTS_MODELS: list[ModelOption] = [
         "Bulbul v3",
         "37 voices, each speaks all 11 languages; Sarvam's per-language picks",
         recommended=True,
+        price=Price("CHARACTERS", output=0.003, source="₹3.00 per 1,000 characters"),
     ),
     ModelOption(
         "bulbul:v4-flash",
         "Bulbul v4 Flash",
         f"newest: {len(V4_FLASH_VOICES)} persona voices, each for one language and style",
         languages=V4_FLASH_LANGUAGES,
+        price=Price("CHARACTERS", output=0.002, source="₹2.00 per 1,000 characters"),
     ),
 ]
 
@@ -140,7 +168,13 @@ TTS_SPEAKERS: dict[str, list[Speaker]] = {
 
 LLM_MODELS: list[ModelOption] = [
     ModelOption(
-        "sarvam-105b", "Sarvam 105B", "Sarvam's own model; ~0.6 s to first reply", recommended=True
+        "sarvam-105b",
+        "Sarvam 105B",
+        "Sarvam's own model; ~0.6 s to first reply",
+        recommended=True,
+        price=Price(
+            "TOKENS", input=15 / 1e6, output=60 / 1e6, source="₹15 / ₹60 per 1M tokens in / out"
+        ),
     ),
 ]
 """Sarvam's own chat models only. Sarvam's API also serves open models (GLM, Gemma,
@@ -150,9 +184,13 @@ _LLM_REASONING: dict[str, str] = {}
 
 TRANSLATE_MODELS: list[ModelOption] = [
     ModelOption(
-        "sarvam-translate:v1", "Sarvam Translate v1", "23 languages, formal", recommended=True
+        "sarvam-translate:v1",
+        "Sarvam Translate v1",
+        "23 languages, formal",
+        recommended=True,
+        price=_TRANSLATE,
     ),
-    ModelOption("mayura:v1", "Mayura v1", "11 languages, colloquial modes"),
+    ModelOption("mayura:v1", "Mayura v1", "11 languages, colloquial modes", price=_TRANSLATE),
 ]
 
 EMBEDDING_MODELS: list[ModelOption] = [
@@ -179,6 +217,12 @@ STEPS: dict[str, list[ModelOption]] = {
     "translate": TRANSLATE_MODELS,
     "embedding": EMBEDDING_MODELS,
 }
+
+
+def all_models() -> list[ModelOption]:
+    """Every model in the catalogue, across steps and languages. Embedding
+    models (OpenAI) carry no price: their cost is not tracked."""
+    return [m for options in STEPS.values() for m in options]
 
 
 def find(step: str, model_id: str) -> ModelOption | None:
