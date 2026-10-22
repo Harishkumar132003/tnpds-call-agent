@@ -158,6 +158,19 @@ class LangfuseExporter:
                     for k in ("translated_query", "translate_ms", "embed_ms", "search_ms", "error")
                 },
             )
+            # Sarvam bills translation per input character; costed via the model price
+            question = search.get("question") or ""
+            if search.get("translated_query") and question:
+                span.generation(
+                    name=f"{name} translate",
+                    model=s.translate_model,
+                    start_time=start,
+                    end_time=end,
+                    input=question,
+                    output=search.get("translated_query"),
+                    usage={"input": len(question), "unit": "CHARACTERS"},
+                    metadata={"translate_ms": search.get("translate_ms")},
+                )
         usage = None
         if turn.prompt_tokens is not None or turn.completion_tokens is not None:
             usage = {

@@ -32,6 +32,18 @@ MODELS = [
         "outputPrice": 0.003,  # ₹30 per 10k characters
     },
     {
+        "modelName": "sarvam-translate:v1",
+        "matchPattern": "(?i)^(sarvam-translate:v1)$",
+        "unit": "CHARACTERS",
+        "inputPrice": 0.002,  # ₹2 per 1,000 characters (pay as you go)
+    },
+    {
+        "modelName": "mayura:v1",
+        "matchPattern": "(?i)^(mayura:v1)$",
+        "unit": "CHARACTERS",
+        "inputPrice": 0.002,  # same translate rate
+    },
+    {
         "modelName": "saaras:v4",
         "matchPattern": "(?i)^(saaras:v4)$",
         "unit": "SECONDS",

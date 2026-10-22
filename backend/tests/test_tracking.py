@@ -430,3 +430,33 @@ async def test_langfuse_exporter_skips_llm_generation_for_fixed_lines(make_setti
     await exporter.close("idle_timeout")
     names = [kw.get("name") for k, kw in fake.calls if k == "generation"]
     assert names == ["turn 1 tts"]
+
+
+async def test_langfuse_exporter_costs_translation_per_character(make_settings):
+    import uuid
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    exporter = LangfuseExporter(settings, CALL, uuid.uuid4(), client=fake)
+    exporter.start()
+    question = "ரேஷன் கார்டு புதுப்பிக்க என்ன வேண்டும்?"
+    exporter.turn_completed(
+        TurnRecord(
+            turn_index=2,
+            user_text=question,
+            assistant_text="a",
+            searches=[
+                {"question": question, "translated_query": "What is needed?", "hits": []},
+                {"question": "already English", "translated_query": None, "hits": []},
+            ],
+        )
+    )
+    await exporter.close("completed")
+    [gen] = [kw for k, kw in fake.calls if k == "generation" and kw["name"].endswith("translate")]
+    assert gen["model"] == "sarvam-translate:v1"
+    assert gen["usage"] == {"input": len(question), "unit": "CHARACTERS"}
+    assert gen["output"] == "What is needed?"
