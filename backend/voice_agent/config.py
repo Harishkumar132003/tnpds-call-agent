@@ -97,8 +97,12 @@ class Settings(BaseSettings):
     """Let the agent search uploaded documents (needs OPENAI_API_KEY and Qdrant)."""
     knowledge_whole_document: bool = True
     """Index each uploaded document as one chunk (one FAQ sheet = one topic)."""
-    knowledge_top_k: int = Field(default=1, ge=1, le=10)
-    """How many chunks a call's search hands to the LLM."""
+    knowledge_top_k: int = Field(default=5, ge=1, le=10)
+    """Most sheets one question's search hands to the LLM."""
+    knowledge_min_score: float = Field(default=0.50, ge=0, le=1)
+    """Send every sheet whose similarity reaches this score (0.50 = 50% in the portal)."""
+    knowledge_keep_best: bool = True
+    """When no sheet reaches KNOWLEDGE_MIN_SCORE, still send the best one (if above 25%)."""
     knowledge_chunk_chars: int = Field(default=1200, gt=100)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)
 

@@ -17,7 +17,7 @@ from voice_agent.knowledge.service import KnowledgeService
 
 TOOL_NAME = "search_knowledge_base"
 MAX_RESULT_CHARS = 12_000  # a whole FAQ sheet (largest is ~9.5k chars)
-MIN_SCORE = 0.25
+MIN_SCORE = 0.25  # floor: below this a sheet is never sent
 MAX_QUESTIONS = 4  # searched in parallel per tool call
 
 # Spoken the moment the LLM decides to search, so the caller is never left in silence.
@@ -98,8 +98,20 @@ class KnowledgeTool:
     """Bridges Pipecat function calls to :class:`KnowledgeService`."""
 
     service: KnowledgeService
-    limit: int = 3
+    limit: int = 5
+    """Most sheets fetched (and sent) per question."""
+    min_score: float = 0.50
+    """Send every fetched sheet at or above this similarity."""
+    keep_best: bool = True
+    """If none reaches ``min_score``, send the single best one when it is above MIN_SCORE."""
     listeners: list[SearchListener] = field(default_factory=list)
+
+    def _selected(self, hits: list[Any]) -> list[Any]:
+        """The hits to send: all at or above ``min_score``, else the best above the floor."""
+        chosen = [h for h in hits if h.score >= max(self.min_score, MIN_SCORE)]
+        if not chosen and self.keep_best and hits and hits[0].score >= MIN_SCORE:
+            chosen = [hits[0]]
+        return chosen
 
     def on_search(self, listener: SearchListener) -> None:
         """Register a callback that receives every :class:`SearchRecord`."""
@@ -181,9 +193,11 @@ class KnowledgeTool:
             f"Knowledge: embedded in {result.embed_ms} ms, Qdrant search in {result.search_ms} ms, "
             f"{len(result.hits)} chunk(s) returned"
         )
+        selected = self._selected(result.hits)
+        chosen_ids = {id(h) for h in selected}
         hits_json: list[dict[str, Any]] = []
         for rank, hit in enumerate(result.hits, start=1):
-            used = hit.score >= MIN_SCORE
+            used = id(hit) in chosen_ids
             preview = hit.text.strip().replace("\n", " ")[:110]
             logger.info(
                 f"Knowledge:   {rank}. {hit.score:.2f} {'USE ' if used else 'skip'} "
@@ -209,7 +223,7 @@ class KnowledgeTool:
                 hits_json,
             )
         )
-        return [h for h in result.hits if h.score >= MIN_SCORE]
+        return selected
 
     async def handle(self, params: FunctionCallParams) -> None:
         questions = self._questions(params.arguments or {})
@@ -257,9 +271,7 @@ class KnowledgeTool:
             await params.result_callback({"found": False, "reason": "search unavailable"})
             return
         if not passages:
-            logger.info(
-                f"Knowledge: nothing above the {MIN_SCORE} relevance floor; telling the LLM"
-            )
+            logger.info(f"Knowledge: nothing at or above {self.min_score:.0%}; telling the LLM")
             await params.result_callback(
                 {"found": False, "reason": "no relevant information", "questions": per_question}
             )

@@ -385,3 +385,20 @@ async def test_mayura_translates_in_colloquial_mode():
         assert await translator.to_english("என் பேரை எப்படி நீக்குறது") == "How do I remove my name?"
     assert calls[0]["mode"] == "modern-colloquial" and calls[0]["model"] == "mayura:v1"
     assert "mode" not in calls[1]
+
+
+def test_selection_sends_everything_above_the_threshold_capped_with_a_fallback():
+    from voice_agent.knowledge.store import Hit
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    def hits(*scores):
+        return [Hit(s, "t", f"d{i}", f"doc{i}", 0) for i, s in enumerate(scores)]
+
+    tool = KnowledgeTool(service=None, min_score=0.50)  # type: ignore[arg-type]
+    assert [h.score for h in tool._selected(hits(0.69, 0.62, 0.55, 0.49))] == [0.69, 0.62, 0.55]
+    # nothing reaches 50%: the best one is still sent ...
+    assert [h.score for h in tool._selected(hits(0.48, 0.45))] == [0.48]
+    # ... unless it is below the 25% floor, or the fallback is off
+    assert tool._selected(hits(0.20)) == []
+    strict = KnowledgeTool(service=None, min_score=0.50, keep_best=False)  # type: ignore[arg-type]
+    assert strict._selected(hits(0.48, 0.45)) == []

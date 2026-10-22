@@ -58,7 +58,12 @@ async def run_voice_session(
     startup_observer = _startup_timing_logger()
     knowledge_service = build_knowledge_service(settings)
     knowledge_tool = (
-        KnowledgeTool(knowledge_service, limit=settings.knowledge_top_k)
+        KnowledgeTool(
+            knowledge_service,
+            limit=settings.knowledge_top_k,
+            min_score=settings.knowledge_min_score,
+            keep_best=settings.knowledge_keep_best,
+        )
         if knowledge_service
         else None
     )
