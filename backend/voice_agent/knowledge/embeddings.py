@@ -8,7 +8,11 @@ from openai import AsyncOpenAI
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 # Vector sizes of the models we know; others must set EMBEDDING_DIMENSIONS.
-KNOWN_DIMENSIONS = {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072}
+KNOWN_DIMENSIONS = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+}
 BATCH_SIZE = 64
 
 

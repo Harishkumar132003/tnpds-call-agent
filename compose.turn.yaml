@@ -1,0 +1,29 @@
+name: voice-agent-turn
+
+# TURN relay (coturn) so browsers outside the server's network can carry WebRTC
+# audio to the bot container (portal -> Test call). The bot sits on a Docker
+# bridge network and picks random UDP ports, so a relay with fixed ports is the
+# only thing worth opening on the firewall:
+#   3478/tcp, 3478/udp and 49160-49200/udp
+# Settings (TURN_PUBLIC_IP, TURN_USER, TURN_PASSWORD, TURN_REALM) come from the
+# project .env, the symlink to backend/.env, like the Langfuse keys. Host
+# networking is required so the relay ports map straight through.
+services:
+  turn:
+    image: coturn/coturn:4.6
+    container_name: voice-agent-turn
+    network_mode: host
+    command: >
+      --listening-port=3478
+      --min-port=49160 --max-port=49200
+      --external-ip=${TURN_PUBLIC_IP:?set TURN_PUBLIC_IP in backend/.env (symlinked as ./.env)}
+      --realm=${TURN_REALM:-wizzgeeks.com}
+      --user=${TURN_USER:?set TURN_USER in backend/.env}:${TURN_PASSWORD:?set TURN_PASSWORD in backend/.env}
+      --lt-cred-mech --fingerprint
+      --no-cli --no-tls --no-dtls
+      --no-multicast-peers
+      --log-file=stdout --simple-log
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }

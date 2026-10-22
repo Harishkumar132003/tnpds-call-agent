@@ -83,7 +83,7 @@ export function PronunciationPage() {
     setSaving(true);
     try {
       // a new config version with every other setting as stored; only the dictionary changes
-      const id = await api.saveConfig({
+      const { id } = await api.saveConfig({
         system_prompt: config.system_prompt,
         temperature: config.temperature,
         language: config.language,
@@ -93,6 +93,13 @@ export function PronunciationPage() {
         idle_goodbye_line: config.idle_goodbye_line,
         knowledge_prompt: config.knowledge_prompt,
         pronunciations: lines,
+        // models are managed on the Models page; keep the active version's choices
+        stt_model: config.stt_model,
+        llm_model: config.llm_model,
+        tts_model: config.tts_model,
+        tts_speaker: config.tts_speaker,
+        translate_model: config.translate_model,
+        embedding_model: config.embedding_model,
         note: note.trim() || `Pronunciation updated (${filled.length} entries)`,
       });
       toast.show({ tone: 'success', title: `Saved version #${id}`, body: filled.length ? `Sarvam dictionary rebuilt with ${filled.length} entries. New calls use it.` : 'Dictionary removed. New calls speak the default way.' });

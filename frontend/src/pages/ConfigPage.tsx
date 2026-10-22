@@ -122,6 +122,13 @@ export function ConfigPage() {
       knowledge_prompt: !d.knowledgePrompt.trim() || d.knowledgePrompt.trim() === config.knowledge_prompt_default.trim() ? null : d.knowledgePrompt.trim(),
       // the Sarvam dictionary is managed on the Pronunciation page; null keeps the active one
       pronunciations: null,
+      // models are managed on the Models page; the active version's choices are kept
+      stt_model: config.stt_model,
+      llm_model: config.llm_model,
+      tts_model: config.tts_model,
+      tts_speaker: config.tts_speaker,
+      translate_model: config.translate_model,
+      embedding_model: config.embedding_model,
       note: notes[section].trim() || `${SECTION_LABEL[section]} updated`,
     };
   };
@@ -130,7 +137,7 @@ export function ConfigPage() {
     e.preventDefault();
     setSaving(section);
     try {
-      const id = await api.saveConfig(bodyFor(section));
+      const { id } = await api.saveConfig(bodyFor(section));
       toast.show({ tone: 'success', title: `Saved version #${id}`, body: `${SECTION_LABEL[section]} updated; other sections unchanged. New sessions use it immediately.` });
       setNotes((n) => ({ ...n, [section]: '' }));
       await load();
@@ -294,7 +301,7 @@ export function ConfigPage() {
                     <div className="list__row" key={v.id}>
                       <button type="button" className="list__open" onClick={() => setOpen(open === v.id ? null : v.id)}>
                         <div className="list__name">#{v.id} {v.id === config.id && <span className="pill pill--up">active</span>} {v.note && <span className="card__note">· {v.note}</span>}</div>
-                        <div className="list__meta">{when(v.created_at)} · {langName(v.language)} · temp {v.temperature ?? 'default'} · {v.system_prompt ? `${v.system_prompt.length} chars` : 'built-in prompt'}{v.greeting ? ' · fixed greeting' : ''}{v.idle_prompt_secs !== null ? ` · idle ${v.idle_prompt_secs}s` : ''}{v.knowledge_prompt ? ' · custom knowledge rules' : ''}{v.pronunciations?.length ? ` · ${v.pronunciations.length} pronunciations` : ''}</div>
+                        <div className="list__meta">{when(v.created_at)} · {langName(v.language)} · temp {v.temperature ?? 'default'} · {v.system_prompt ? `${v.system_prompt.length} chars` : 'built-in prompt'}{v.greeting ? ' · fixed greeting' : ''}{v.idle_prompt_secs !== null ? ` · idle ${v.idle_prompt_secs}s` : ''}{v.knowledge_prompt ? ' · custom knowledge rules' : ''}{v.pronunciations?.length ? ` · ${v.pronunciations.length} pronunciations` : ''}{[v.stt_model, v.llm_model, v.tts_model, v.tts_speaker, v.translate_model].some(Boolean) ? ` · models: ${[v.stt_model, v.llm_model, v.tts_model && v.tts_speaker ? `${v.tts_model}/${v.tts_speaker}` : v.tts_model || v.tts_speaker, v.translate_model].filter(Boolean).join(', ')}` : ''}</div>
                         {open === v.id && v.system_prompt && <pre className="preview-prompt" style={{ marginTop: 8 }}>{v.system_prompt}</pre>}
                       </button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => restore(v)}>Restore</button>

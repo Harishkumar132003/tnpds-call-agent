@@ -7,14 +7,16 @@ usable as a start-up preflight check.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 from pipecat.services.llm_service import LLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.sarvam.llm import SarvamLLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
-from pipecat.services.sarvam.tts import TTS_MODEL_CONFIGS, SarvamTTSService, get_speakers_for_model
+from pipecat.services.sarvam.tts import TTS_MODEL_CONFIGS, SarvamTTSService
 
+from voice_agent import models as catalogue
 from voice_agent.config import ConfigurationError, LLMProvider, Settings
 from voice_agent.languages import get_language
 from voice_agent.prompts import build_system_prompt
@@ -38,6 +40,25 @@ def build_stt(settings: Settings) -> SarvamSTTService:
             language=language,
         ),
     )
+
+
+def _register_v4_flash() -> None:
+    """Add bulbul:v4-flash to Pipecat's TTS model table (Pipecat 1.12 stops at v3).
+
+    Same request shape as v3 (checked over the websocket on 2026-10-22, with
+    a pronunciation dictionary); only the voice ids differ.
+    """
+    if "bulbul:v4-flash" in TTS_MODEL_CONFIGS:
+        return
+    v3 = TTS_MODEL_CONFIGS["bulbul:v3"]
+    TTS_MODEL_CONFIGS["bulbul:v4-flash"] = dataclasses.replace(
+        v3,
+        default_speaker="shubh_enhi_ads",
+        speakers=tuple(catalogue.speakers_for("bulbul:v4-flash")),
+    )
+
+
+_register_v4_flash()
 
 
 class SarvamTTSWithDictionary(SarvamTTSService):
@@ -122,10 +143,10 @@ def _validate_tts_options(settings: Settings) -> None:
             f"SARVAM_TTS_PACE={settings.sarvam_tts_pace} is outside {model}'s range {low}-{high}"
         )
     speaker = settings.sarvam_tts_speaker
-    if speaker and speaker not in get_speakers_for_model(model):
+    if speaker and speaker not in catalogue.speakers_for(model):
         raise ConfigurationError(
             f"SARVAM_TTS_SPEAKER={speaker!r} is not available for {model}. "
-            f"Choose one of: {', '.join(get_speakers_for_model(model))}"
+            f"Choose one of: {', '.join(catalogue.speakers_for(model))}"
         )
 
 
@@ -137,6 +158,20 @@ class OpenAICompatibleLLMService(OpenAILLMService):
     """
 
     supports_developer_role = False
+
+
+class SarvamCatalogueLLMService(SarvamLLMService):
+    """SarvamLLMService that accepts the models Sarvam's API serves today.
+
+    Pipecat 1.12 ships a fixed list (glm5.2, deepseekv4-flash, ...) that lags
+    the API (glm5.3, deepseekv4.1-flash, ...). The catalogue in
+    :mod:`voice_agent.models` is the source of truth; every model there accepts
+    ``reasoning_effort`` (checked 2026-10-21), so all are treated as reasoning
+    models and get the setting from :func:`voice_agent.models.reasoning_effort_for`.
+    """
+
+    _SUPPORTED_MODELS = frozenset(m.id for m in catalogue.LLM_MODELS)
+    _REASONING_MODELS = frozenset(m.id for m in catalogue.LLM_MODELS)
 
 
 def build_llm(
@@ -151,13 +186,15 @@ def build_llm(
     if temperature is None:
         temperature = settings.llm_temperature
     if settings.llm_provider is LLMProvider.SARVAM:
-        return SarvamLLMService(
+        return SarvamCatalogueLLMService(
             api_key=settings.sarvam_api_key.get_secret_value(),
             settings=SarvamLLMService.Settings(
                 model=settings.llm_model,
                 system_instruction=system_instruction,
                 temperature=temperature,
-                reasoning_effort=settings.llm_reasoning_effort,
+                reasoning_effort=catalogue.reasoning_effort_for(
+                    settings.llm_model, settings.llm_reasoning_effort
+                ),
             ),
         )
     assert settings.openai_api_key is not None  # enforced by Settings
@@ -225,7 +262,9 @@ def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
         store=store,
         embedder=embedder,
         translator=SarvamTranslator(
-            settings.sarvam_api_key.get_secret_value(), source_language=settings.agent_language
+            settings.sarvam_api_key.get_secret_value(),
+            source_language=settings.agent_language,
+            model=settings.translate_model,
         ),
         chunk_chars=settings.knowledge_chunk_chars,
         chunk_overlap=settings.knowledge_chunk_overlap,

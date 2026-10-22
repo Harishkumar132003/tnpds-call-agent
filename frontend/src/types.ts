@@ -100,6 +100,14 @@ export interface AgentConfig {
   /** Pronunciation dictionary as "word = spoken form" lines, and its Sarvam id. */
   pronunciations: string;
   tts_dict_id: string | null;
+  /** Per-step Sarvam model overrides; null = environment default (see model_defaults). */
+  stt_model: string | null;
+  llm_model: string | null;
+  tts_model: string | null;
+  tts_speaker: string | null;
+  translate_model: string | null;
+  embedding_model: string | null;
+  model_defaults: { stt: string; llm: string; tts: string; tts_speaker: string; translate: string; embedding: string };
   idle_defaults: { prompt_secs: number; check_lines: Record<string, string>; goodbye_lines: Record<string, string> };
   default_language: string;
   /** The built-in English prompt template with {language_*} placeholders. */
@@ -120,8 +128,43 @@ export interface ConfigVersion {
   knowledge_prompt: string | null;
   pronunciations: { word: string; spoken: string }[] | null;
   tts_dict_id: string | null;
+  stt_model: string | null;
+  llm_model: string | null;
+  tts_model: string | null;
+  tts_speaker: string | null;
+  translate_model: string | null;
+  embedding_model: string | null;
   note: string | null;
   created_at: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  note: string;
+  recommended: boolean;
+}
+
+export interface VoiceOption {
+  id: string;
+  gender: string;
+  /** Sarvam's production tiers by error rate: 1 best, 2 good, 3 unranked. */
+  tier: number;
+  /** Persona style of a bulbul:v4-flash voice (narration, customer...); null for v3. */
+  style: string | null;
+  /** Named by Sarvam's docs for the catalogue's language. */
+  recommended: boolean;
+}
+
+/** Sarvam models per pipeline step that support one language. */
+export interface ModelCatalogue {
+  language: string;
+  stt: ModelOption[];
+  llm: ModelOption[];
+  tts: ModelOption[];
+  translate: ModelOption[];
+  embedding: ModelOption[];
+  voices: Record<string, VoiceOption[]>;
 }
 
 export interface KnowledgeStatus {

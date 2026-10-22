@@ -8,6 +8,7 @@ import { CallsPage } from './pages/CallsPage';
 import { ConfigPage } from './pages/ConfigPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { KnowledgePage } from './pages/KnowledgePage';
+import { ModelsPage } from './pages/ModelsPage';
 import { PronunciationPage } from './pages/PronunciationPage';
 import { TestCallPage } from './pages/TestCallPage';
 import type { AgentConfig } from './types';
@@ -54,6 +55,7 @@ function Shell() {
           <Route path="/calls/:callId" element={<CallPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route path="/pronunciation" element={<PronunciationPage />} />
           <Route path="/test-call" element={<TestCallPage />} />
         </Routes>

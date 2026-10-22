@@ -1,4 +1,5 @@
 import type {
+  ModelCatalogue,
   TestCallInfo,
   AgentConfig,
   CallDetail,
@@ -51,6 +52,7 @@ export const api = {
   call: (id: string) => get<{ call: CallDetail; turns: Turn[] }>(`/api/calls/${id}`),
   config: () => get<AgentConfig>('/api/config'),
   configHistory: () => get<ConfigVersion[]>('/api/config/history'),
+  models: (language: string) => get<ModelCatalogue>(`/api/models?language=${encodeURIComponent(language)}`),
   previewPrompt: (language: string, systemPrompt: string | null, knowledgePrompt?: string | null) => {
     const q = new URLSearchParams({ language });
     if (systemPrompt) q.set('system_prompt', systemPrompt);
@@ -67,6 +69,12 @@ export const api = {
     idle_goodbye_line: string | null;
     knowledge_prompt: string | null;
     pronunciations?: string | null;
+    stt_model?: string | null;
+    llm_model?: string | null;
+    tts_model?: string | null;
+    tts_speaker?: string | null;
+    translate_model?: string | null;
+    embedding_model?: string | null;
     note: string | null;
   }) => {
     const res = await fetch('/api/config', {
@@ -74,8 +82,8 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = (await res.json()) as { id?: number; detail?: string };
+    const data = (await res.json()) as { id?: number; reindexed?: number | null; needs_reupload?: number | null; detail?: string };
     if (!res.ok) throw new Error(data.detail ?? `${res.status}`);
-    return data.id as number;
+    return data as { id: number; reindexed: number | null; needs_reupload: number | null };
   },
 };

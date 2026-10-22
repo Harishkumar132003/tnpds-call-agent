@@ -46,6 +46,10 @@ export function Sidebar({ liveCalls, backendUp, language, agentName }: Props) {
           <Icon name="pencil" className="nav__icon" />
           <span className="nav__label">Configuration</span>
         </NavLink>
+        <NavLink to="/models" className={navClass}>
+          <Icon name="layers" className="nav__icon" />
+          <span className="nav__label">Models</span>
+        </NavLink>
         <NavLink to="/knowledge" className={navClass}>
           <Icon name="file" className="nav__icon" />
           <span className="nav__label">Knowledge</span>

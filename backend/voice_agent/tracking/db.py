@@ -21,6 +21,13 @@ alter table agent_config add column if not exists idle_goodbye_line text;
 alter table agent_config add column if not exists knowledge_prompt text;
 alter table agent_config add column if not exists pronunciations jsonb;
 alter table agent_config add column if not exists tts_dict_id text;
+alter table agent_config add column if not exists stt_model text;
+alter table agent_config add column if not exists llm_model text;
+alter table agent_config add column if not exists tts_model text;
+alter table agent_config add column if not exists tts_speaker text;
+alter table agent_config add column if not exists translate_model text;
+alter table agent_config add column if not exists embedding_model text;
+alter table documents add column if not exists content text;
 
 create table if not exists calls (
     id            uuid primary key,

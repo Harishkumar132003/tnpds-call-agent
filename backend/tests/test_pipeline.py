@@ -65,7 +65,7 @@ def test_pipeline_processor_order(settings):
         "SmallWebRTCInputTransport",
         "SarvamSTTService",
         "LLMUserAggregator",
-        "SarvamLLMService",
+        "SarvamCatalogueLLMService",
         "SarvamTTSWithDictionary",
         "SmallWebRTCOutputTransport",
         "LLMAssistantAggregator",

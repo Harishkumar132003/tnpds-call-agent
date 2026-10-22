@@ -31,6 +31,13 @@ class IngestResult:
 
 
 @dataclass(frozen=True)
+class ReindexResult:
+    reindexed: int
+    needs_reupload: int
+    seconds: float
+
+
+@dataclass(frozen=True)
 class SearchResult:
     hits: list[Hit]
     embed_ms: int
@@ -84,7 +91,7 @@ class KnowledgeService:
             raise EmptyDocumentError(f"No text could be extracted from {filename!r}")
         document_id = str(uuid.uuid4())
         await self._record(
-            document_id, filename, media_type, len(data), len(text), len(chunks), "embedding"
+            document_id, filename, media_type, len(data), len(text), len(chunks), "embedding", text
         )
         try:
             await self._store.ensure_collection()
@@ -136,7 +143,67 @@ class KnowledgeService:
         if self._pool is None:
             return []
         async with self._pool.acquire() as conn:
-            return await conn.fetch("select * from documents order by created_at desc")
+            return await conn.fetch(
+                "select id, name, media_type, size_bytes, chars, chunk_count, embedding_model, "
+                "collection, status, error, created_at from documents order by created_at desc"
+            )
+
+    @property
+    def embedding_model(self) -> str:
+        return self._embedder.model
+
+    async def reindex_all(self) -> ReindexResult:
+        """Rebuild the collection with this service's embedder and re-embed every document.
+
+        Used when the embedding model changes. Documents whose text was not kept
+        (uploaded before the portal stored it) cannot be re-embedded: they are
+        marked ``needs-reupload`` and dropped from the collection.
+        """
+        if self._pool is None:
+            raise RuntimeError("reindex needs the documents database")
+        started = time.monotonic()
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("select id, name, content from documents order by created_at")
+        await self._store.recreate_collection()
+        done, skipped = 0, 0
+        for row in rows:
+            document_id = str(row["id"])
+            if not row["content"]:
+                skipped += 1
+                await self._set_status(
+                    document_id,
+                    "needs-reupload",
+                    "uploaded before the portal kept document text; upload it again",
+                )
+                continue
+            chunks = chunk_text(
+                row["content"],
+                max_chars=self._chunk_chars,
+                overlap=self._chunk_overlap,
+                whole_document=self._whole_document,
+            )
+            try:
+                vectors = await self._embedder.embed([c.text for c in chunks])
+                await self._store.upsert(document_id, row["name"], chunks, vectors)
+            except Exception as exc:
+                await self._set_status(document_id, "failed", str(exc)[:500])
+                raise
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "update documents set status = 'ready', error = null, chunk_count = $2, "
+                    "embedding_model = $3, collection = $4 where id = $1",
+                    row["id"],
+                    len(chunks),
+                    self._embedder.model,
+                    self._store.collection,
+                )
+            done += 1
+        seconds = time.monotonic() - started
+        logger.info(
+            f"Re-indexed {done} documents with {self._embedder.model} "
+            f"({skipped} need re-upload) in {seconds:.1f}s"
+        )
+        return ReindexResult(done, skipped, seconds)
 
     async def _record(  # pool is checked by ingest()
         self,
@@ -147,13 +214,14 @@ class KnowledgeService:
         chars: int,
         n: int,
         status: str,
+        content: str,
     ) -> None:
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "insert into documents (id, name, media_type, size_bytes, chars, chunk_count, "
-                "embedding_model, collection, status, created_at) "
-                "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                "embedding_model, collection, status, created_at, content) "
+                "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 uuid.UUID(document_id),
                 name,
                 media_type,
@@ -164,6 +232,7 @@ class KnowledgeService:
                 self._store.collection,
                 status,
                 datetime.now(UTC),
+                content,
             )
 
     async def _set_status(self, document_id: str, status: str, error: str | None) -> None:

@@ -33,6 +33,14 @@ class AgentConfig:
     """``[{"word", "spoken"}]`` entries of the Sarvam pronunciation dictionary."""
     tts_dict_id: str | None = None
     """Sarvam dictionary id built from ``pronunciations`` (passed to TTS)."""
+    stt_model: str | None = None
+    llm_model: str | None = None
+    tts_model: str | None = None
+    tts_speaker: str | None = None
+    translate_model: str | None = None
+    """Per-step Sarvam model choices (see ``voice_agent.models``); None = environment default."""
+    embedding_model: str | None = None
+    """OpenAI embedding model for the knowledge base; None = environment default."""
 
 
 async def load_active_config(pool: asyncpg.Pool | None) -> AgentConfig:
@@ -45,7 +53,9 @@ async def load_active_config(pool: asyncpg.Pool | None) -> AgentConfig:
                 conn.fetchrow(
                     "select id, system_prompt, temperature, language, greeting, "
                     "idle_prompt_secs, idle_check_line, idle_goodbye_line, knowledge_prompt, "
-                    "pronunciations::text as pronunciations, tts_dict_id "
+                    "pronunciations::text as pronunciations, tts_dict_id, "
+                    "stt_model, llm_model, tts_model, tts_speaker, translate_model, "
+                    "embedding_model "
                     "from agent_config order by id desc limit 1"
                 ),
                 timeout=CONFIG_READ_TIMEOUT_SECS,
@@ -67,6 +77,12 @@ async def load_active_config(pool: asyncpg.Pool | None) -> AgentConfig:
         knowledge_prompt=row["knowledge_prompt"],
         pronunciations=json.loads(row["pronunciations"]) if row["pronunciations"] else None,
         tts_dict_id=row["tts_dict_id"],
+        stt_model=row["stt_model"],
+        llm_model=row["llm_model"],
+        tts_model=row["tts_model"],
+        tts_speaker=row["tts_speaker"],
+        translate_model=row["translate_model"],
+        embedding_model=row["embedding_model"],
     )
 
 
@@ -84,14 +100,24 @@ async def save_config(
     knowledge_prompt: str | None = None,
     pronunciations: list[dict[str, str]] | None = None,
     tts_dict_id: str | None = None,
+    stt_model: str | None = None,
+    llm_model: str | None = None,
+    tts_model: str | None = None,
+    tts_speaker: str | None = None,
+    translate_model: str | None = None,
+    embedding_model: str | None = None,
 ) -> int:
     """Store a new config version and return its id."""
     async with pool.acquire() as conn:
         return await conn.fetchval(
             "insert into agent_config (system_prompt, temperature, note, language, greeting, "
             "idle_prompt_secs, idle_check_line, idle_goodbye_line, knowledge_prompt, "
-            "pronunciations, tts_dict_id) "
-            "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11) returning id",
+            "pronunciations, tts_dict_id, "
+            "stt_model, llm_model, tts_model, tts_speaker, translate_model, "
+            "embedding_model) "
+            "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, "
+            "$11, $12, $13, $14, $15, $16, $17) "
+            "returning id",
             system_prompt,
             temperature,
             note,
@@ -103,6 +129,12 @@ async def save_config(
             knowledge_prompt,
             json.dumps(pronunciations) if pronunciations is not None else None,
             tts_dict_id,
+            stt_model,
+            llm_model,
+            tts_model,
+            tts_speaker,
+            translate_model,
+            embedding_model,
         )
 
 
@@ -111,7 +143,9 @@ async def list_config_history(pool: asyncpg.Pool, limit: int = 20) -> list[dict]
         rows = await conn.fetch(
             "select id, system_prompt, temperature, language, greeting, idle_prompt_secs, "
             "idle_check_line, idle_goodbye_line, knowledge_prompt, "
-            "pronunciations::text as pronunciations, tts_dict_id, note, created_at "
+            "pronunciations::text as pronunciations, tts_dict_id, "
+            "stt_model, llm_model, tts_model, tts_speaker, translate_model, embedding_model, "
+            "note, created_at "
             "from agent_config "
             "order by id desc limit $1",
             limit,

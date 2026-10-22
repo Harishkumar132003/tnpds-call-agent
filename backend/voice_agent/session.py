@@ -17,13 +17,14 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
+from voice_agent import models as catalogue
 from voice_agent.config import Settings
 from voice_agent.knowledge.tool import KnowledgeTool
 from voice_agent.languages import UnsupportedLanguageError, get_language
 from voice_agent.pipeline import build_voice_pipeline
 from voice_agent.services import build_knowledge_service
 from voice_agent.tracking import get_tracking_pool
-from voice_agent.tracking.config_store import load_active_config
+from voice_agent.tracking.config_store import AgentConfig, load_active_config
 from voice_agent.tracking.conversation import ConversationTracker
 from voice_agent.tracking.langfuse_export import LangfuseExporter, langfuse_configured
 from voice_agent.tracking.recorder import CallInfo, CallRecorder
@@ -50,6 +51,7 @@ async def run_voice_session(
     pool = await get_tracking_pool(settings.database_url)
     config = await load_active_config(pool)
     settings = apply_language_override(settings, config.language)
+    settings = apply_model_overrides(settings, config)
     if call_info is not None:
         call_info = replace(call_info, language=settings.agent_language)
     latency_observer = UserBotLatencyObserver()
@@ -147,6 +149,41 @@ def _startup_timing_logger() -> StartupTimingObserver:
             logger.info(f"Client connected {connected_ms:.0f} ms after pipeline start")
 
     return observer
+
+
+def apply_model_overrides(settings: Settings, config: AgentConfig) -> Settings:
+    """Return settings with the portal's per-step model choices applied.
+
+    Choices that no longer fit the catalogue or the language are ignored with a
+    warning, so a stale config version cannot stop calls from being answered.
+    """
+    chosen = {
+        "sarvam_stt_model": config.stt_model,
+        "llm_model": config.llm_model,
+        "sarvam_tts_model": config.tts_model,
+        "sarvam_tts_speaker": config.tts_speaker,
+        "translate_model": config.translate_model,
+        "embedding_model": config.embedding_model,
+    }
+    update = {k: v for k, v in chosen.items() if v}
+    if config.embedding_model:
+        update["embedding_dimensions"] = None  # resolved from the model's known size
+    if not update:
+        return settings
+    try:
+        catalogue.validate_selection(
+            settings.agent_language,
+            stt_model=config.stt_model,
+            llm_model=config.llm_model,
+            tts_model=config.tts_model or settings.sarvam_tts_model,
+            tts_speaker=config.tts_speaker,
+            translate_model=config.translate_model,
+            embedding_model=config.embedding_model,
+        )
+    except ValueError as exc:
+        logger.warning(f"Ignoring portal model choices: {exc}")
+        return settings
+    return settings.model_copy(update=update)
 
 
 def apply_language_override(settings: Settings, language: str | None) -> Settings:

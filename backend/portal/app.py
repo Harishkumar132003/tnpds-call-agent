@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -13,6 +15,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from voice_agent import models as catalogue
 from voice_agent.config import Settings
 from voice_agent.knowledge.embeddings import OpenAIEmbedder
 from voice_agent.knowledge.extract import SUPPORTED_EXTENSIONS, UnsupportedFileError
@@ -110,6 +113,14 @@ class ConfigIn(BaseModel):
     knowledge_prompt: str | None = None
     pronunciations: str | None = None
     """``word = spoken form`` lines; None keeps the active version's dictionary."""
+    stt_model: str | None = None
+    llm_model: str | None = None
+    tts_model: str | None = None
+    tts_speaker: str | None = None
+    translate_model: str | None = None
+    embedding_model: str | None = None
+    """Per-step models; None or "" = environment default. A changed embedding model
+    re-embeds every document before the version is saved."""
     note: str | None = None
 
 
@@ -138,8 +149,10 @@ def create_app(
         app.state.knowledge = None
         app.state.knowledge_store = None
         if knowledge is not None:
+            # the active config may pin a different embedding model than .env
+            active = await load_active_config(app.state.pool)
             app.state.knowledge_store, app.state.knowledge = _build_knowledge(
-                app.state.pool, knowledge
+                app.state.pool, _with_embedding(knowledge, active.embedding_model)
             )
         try:
             yield
@@ -201,6 +214,20 @@ def create_app(
             "knowledge_prompt": config.knowledge_prompt,
             "pronunciations": entries_to_text(config.pronunciations),
             "tts_dict_id": config.tts_dict_id,
+            "stt_model": config.stt_model,
+            "llm_model": config.llm_model,
+            "tts_model": config.tts_model,
+            "tts_speaker": config.tts_speaker,
+            "translate_model": config.translate_model,
+            "embedding_model": config.embedding_model,
+            "model_defaults": {
+                "stt": knowledge.sarvam_stt_model if knowledge else "saaras:v4",
+                "llm": knowledge.llm_model if knowledge else "sarvam-105b",
+                "tts": knowledge.sarvam_tts_model if knowledge else "bulbul:v3",
+                "tts_speaker": (knowledge.sarvam_tts_speaker if knowledge else None) or "shubh",
+                "translate": knowledge.translate_model if knowledge else "sarvam-translate:v1",
+                "embedding": knowledge.embedding_model if knowledge else "text-embedding-3-small",
+            },
             "knowledge_prompt_default": PROMPT_ADDITION.strip(),
             "knowledge_on": bool(
                 knowledge and knowledge.knowledge_enabled and knowledge.openai_api_key
@@ -215,6 +242,15 @@ def create_app(
             "agent_name": agent_name,
             "languages": languages,
         }
+
+    @app.get("/api/models")
+    async def api_models(language: str | None = None):
+        """Sarvam models per pipeline step that support ``language`` (default: the env language)."""
+        try:
+            lang = get_language(language or default_prompt_language)
+        except UnsupportedLanguageError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return catalogue.catalogue(lang.code)
 
     @app.get("/api/config/preview")
     async def api_config_preview(
@@ -244,6 +280,49 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         active = await load_active_config(pool(request))
         language = config.language or default_prompt_language
+        models = {
+            key: (getattr(body, key) or "").strip() or None
+            for key in (
+                "stt_model",
+                "llm_model",
+                "tts_model",
+                "tts_speaker",
+                "translate_model",
+                "embedding_model",
+            )
+        }
+        try:
+            catalogue.validate_selection(
+                language,
+                stt_model=models["stt_model"],
+                llm_model=models["llm_model"],
+                tts_model=models["tts_model"]
+                or (knowledge.sarvam_tts_model if knowledge else None),
+                tts_speaker=models["tts_speaker"],
+                translate_model=models["translate_model"],
+                embedding_model=models["embedding_model"],
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        reindex = None
+        if knowledge is not None and request.app.state.knowledge is not None:
+            wanted = models["embedding_model"] or knowledge.embedding_model
+            if wanted != request.app.state.knowledge.embedding_model:
+                # Rebuild the collection for the new model before the version exists,
+                # so a failed re-index never leaves a config the agent cannot search with.
+                store, service = _build_knowledge(pool(request), _with_embedding(knowledge, wanted))
+                assert service is not None
+                try:
+                    reindex = await service.reindex_all()
+                except Exception as exc:
+                    await store.close()
+                    raise HTTPException(502, f"Re-indexing with {wanted} failed: {exc}") from exc
+                old_store = request.app.state.knowledge_store
+                request.app.state.knowledge_store, request.app.state.knowledge = store, service
+                if old_store is not None:
+                    # requests already running on the old store (an upload, a search)
+                    # must finish first; close it once they are long done
+                    asyncio.get_running_loop().create_task(_close_later(old_store, 60))
         pronunciations = active.pronunciations
         dict_id = active.tts_dict_id
         if body.pronunciations is not None:
@@ -271,9 +350,15 @@ def create_app(
             knowledge_prompt=(body.knowledge_prompt or "").strip() or None,
             pronunciations=pronunciations,
             tts_dict_id=dict_id,
+            **models,
             note=(body.note or "").strip() or None,
         )
-        return {"id": new_id, "tts_dict_id": dict_id}
+        return {
+            "id": new_id,
+            "tts_dict_id": dict_id,
+            "reindexed": reindex.reindexed if reindex else None,
+            "needs_reupload": reindex.needs_reupload if reindex else None,
+        }
 
     @app.post("/api/pronunciation/test")
     async def api_pronunciation_test(request: Request, body: PronunciationTestIn):
@@ -296,7 +381,15 @@ def create_app(
             else:
                 dict_id = None
         try:
-            audio = await _synthesise(api_key, body.text, language, knowledge, dict_id)
+            audio = await _synthesise(
+                api_key,
+                body.text,
+                language,
+                knowledge,
+                dict_id,
+                model=active.tts_model,
+                speaker=active.tts_speaker,
+            )
         finally:
             if temporary and dict_id:
                 await SarvamDictionaries(api_key).delete(dict_id)
@@ -349,7 +442,13 @@ def create_app(
             "qdrant_url": knowledge.qdrant_url if knowledge else None,
             "collection": knowledge.qdrant_collection if knowledge else None,
             "points": points,
-            "embedding_model": knowledge.embedding_model if knowledge else None,
+            "embedding_model": (
+                request.app.state.knowledge.embedding_model
+                if request.app.state.knowledge
+                else knowledge.embedding_model
+                if knowledge
+                else None
+            ),
             "embedding_key_set": request.app.state.knowledge is not None,
             "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
         }
@@ -407,8 +506,16 @@ def create_app(
 
 
 async def _synthesise(
-    api_key: str, text: str, language: str, settings: Settings, dict_id: str | None
+    api_key: str,
+    text: str,
+    language: str,
+    settings: Settings,
+    dict_id: str | None,
+    *,
+    model: str | None = None,
+    speaker: str | None = None,
 ) -> str:
+    """One REST synthesis with the agent's voice (portal choices first, then .env)."""
     import base64
 
     import httpx
@@ -416,8 +523,11 @@ async def _synthesise(
     payload = {
         "text": text,
         "target_language_code": language,
-        "speaker": settings.sarvam_tts_speaker or "shubh",
-        "model": settings.sarvam_tts_model,
+        "speaker": speaker
+        or settings.sarvam_tts_speaker
+        or catalogue.default_speaker(model or settings.sarvam_tts_model, language)
+        or "shubh",
+        "model": model or settings.sarvam_tts_model,
         "speech_sample_rate": 24000,
         "output_audio_codec": "wav",
         "pace": settings.sarvam_tts_pace,
@@ -435,6 +545,19 @@ async def _synthesise(
     audio = r.json()["audios"][0]
     base64.b64decode(audio)  # validate
     return audio
+
+
+async def _close_later(store: KnowledgeStore, delay_secs: float) -> None:
+    await asyncio.sleep(delay_secs)
+    with contextlib.suppress(Exception):  # best effort: the process may be shutting down
+        await store.close()
+
+
+def _with_embedding(settings: Settings, model: str | None) -> Settings:
+    """Settings with the portal-chosen embedding model (dimensions come from the model)."""
+    if not model or model == settings.embedding_model:
+        return settings
+    return settings.model_copy(update={"embedding_model": model, "embedding_dimensions": None})
 
 
 def _build_knowledge(

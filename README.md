@@ -134,6 +134,28 @@ switches WebRTC (and this page) off. Browser audio is peer-to-peer UDP to the
 server's public IP, so a deployed server needs its UDP ports open or a TURN
 server; Cloudflare's HTTP proxy does not carry it.
 
+### Browser calls from outside the server: TURN relay
+
+Browser audio is peer-to-peer UDP. The bot container is on a Docker bridge
+network and picks random UDP ports, so a browser outside the server cannot
+reach it directly: the signalling over HTTPS succeeds, the call shows
+"connecting", and no audio flows. `compose.turn.yaml` runs a coturn relay with
+fixed ports that both sides use:
+
+```bash
+# backend/.env: TURN_PUBLIC_IP=<server IPv4>  TURN_USER=voice  TURN_PASSWORD=<openssl rand -hex 16>
+docker compose -f compose.turn.yaml up -d   # reads them through the ./.env symlink
+# firewall (ufw and the cloud provider's rules): 3478/tcp, 3478/udp, 49160-49200/udp
+# backend/.env.docker: PIPECAT_ICE_SERVERS=[{"urls":"turn:<ip>:3478?transport=udp","username":"voice","credential":"<password>"},{"urls":"stun:<ip>:3478"}]
+docker compose up -d                    # the bot reads the ICE servers at start-up
+```
+
+The runner hands the same servers to the browser in its `/start` response, so
+the Test call page needs no change. About 20 simultaneous browser calls fit in
+the relay range; widen it for more. The TURN password is visible to anyone
+who can call `/start`, so rotate it if the bot host is ever exposed without
+`PIPECAT_ALLOWED_ORIGINS`.
+
 ### Headless check without a browser
 
 ```bash
@@ -445,6 +467,32 @@ speech from the caller resets the counter. The call is stored with
 `end_reason = idle_timeout`. Set `IDLE_PROMPT_SECS=0` to disable, and
 `IDLE_CHECK_LINE` / `IDLE_GOODBYE_LINE` to change the wording.
 
+## Models per step (Sarvam)
+
+The **Models** page of the portal picks the Sarvam model for
+each pipeline step: speech to text, language model, text to speech plus voice,
+and the translation model used for knowledge-base queries. The lists come from
+`voice_agent/models.py`, a catalogue checked against Sarvam's API on
+2026-10-21, and `GET /api/models?language=` returns only the entries that
+support the selected language, so a Tamil agent is never offered a model or
+voice that cannot speak Tamil (bulbul:v2, for example, rejects it).
+
+| Step | Offered | Notes |
+|---|---|---|
+| speech to text | `saaras:v4` (recommended), `saaras:v3` | the two models that work over the streaming websocket |
+| language model | `sarvam-105b` | Sarvam's own model only, by choice. Sarvam's API also serves GLM, Gemma and DeepSeek; they passed the Tamil and tool-call probes and can be added to the catalogue if wanted |
+| text to speech | `bulbul:v3` (recommended) with its 37 voices; `bulbul:v4-flash` with 207 persona voices (Sarvam lists 209; the two Assamese ones are left out because the agent does not support as-IN) | v3 voices speak every language and Sarvam's per-language picks are listed first with its quality tier (1 best). v4-flash voices are recorded for one language and one style (`aravind_ta_ads`), so only the voices for the selected language are offered, and the model is hidden for Malayalam and Odia, which have none. The voice list comes from Sarvam's API (`voice_agent/data/bulbul_v4_flash_voices.json`). Pipecat 1.12 does not know v4-flash, so `services.py` registers it; it was checked over the websocket with a pronunciation dictionary on 2026-10-22 |
+| translation | `sarvam-translate:v1` (recommended), `mayura:v1` | Tamil to English before searching |
+| embedding (OpenAI) | `text-embedding-3-small` (recommended), `text-embedding-3-large`, `text-embedding-ada-002` | embeds documents and questions. Changing it re-embeds every document on save: the portal keeps each document's extracted text for this. Documents uploaded before that (before 2026-10-21) are marked `needs-reupload` and must be uploaded again |
+
+Choices equal to the environment default (`SARVAM_STT_MODEL`, `LLM_MODEL`,
+`SARVAM_TTS_MODEL`, `SARVAM_TTS_SPEAKER`, `TRANSLATE_MODEL`, `EMBEDDING_MODEL`) are stored as
+null, so they keep following `.env`. Each session validates the stored choices
+against the catalogue and the language; a choice that no longer fits is
+ignored with a warning rather than failing the call. Adding a model is a
+catalogue edit, after checking it with the same probes (streaming support,
+Tamil reply, tool call).
+
 ## Pronunciation (Sarvam dictionary)
 
 The **Pronunciation** page of the portal holds a table of entries, one row
@@ -508,7 +556,18 @@ uv run python scripts/plivo_call.py --answer-url https://<ngrok-host>/
 ```
 
 Each new ngrok session gets a new host on the free plan, so repeat step 2
-after restarting ngrok. `PLIVO_AUTH_ID`/`PLIVO_AUTH_TOKEN` are required for
+after restarting ngrok. `scripts/plivo_point.py` does step 2 for you and
+switches the dev number between the laptop and the server:
+
+```bash
+uv run python scripts/plivo_point.py status   # where the number rings now, and whether that bot answers
+uv run python scripts/plivo_point.py local    # the current ngrok tunnel (from ngrok's local API)
+uv run python scripts/plivo_point.py prod     # https://callagent.wizzgeeks.com/ (PLIVO_PROD_HOST)
+```
+
+It only ever edits the application named `PLIVO_APP_NAME` (default
+`TNPDS_Custom_Development`) and refuses to touch one whose answer URL points
+at apps.sarvam.ai, which is the live app on the other number. `PLIVO_AUTH_ID`/`PLIVO_AUTH_TOKEN` are required for
 the bot to hang up calls it ends itself.
 
 Verified on 2026-10-19 with a real Plivo number: webhook answered through

@@ -40,6 +40,13 @@ class KnowledgeStore:
                 self.collection, "document_id", models.PayloadSchemaType.KEYWORD
             )
 
+    async def recreate_collection(self) -> None:
+        """Drop the collection and create it again for ``vector_size``
+        (after an embedding model change)."""
+        if await self._client.collection_exists(self.collection):
+            await self._client.delete_collection(self.collection)
+        await self.ensure_collection()
+
     async def upsert(
         self, document_id: str, document_name: str, chunks: list[Chunk], vectors: list[list[float]]
     ) -> None:
