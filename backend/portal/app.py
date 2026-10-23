@@ -97,6 +97,12 @@ LATENCY_BUCKET_LABELS = ["< 1 s", "1 – 1.5 s", "1.5 – 2 s", "2 – 3 s", "> 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
+class PreviewIn(BaseModel):
+    language: str
+    system_prompt: str | None = None
+    knowledge_prompt: str | None = None
+
+
 class SearchIn(BaseModel):
     question: str
     limit: int = 5
@@ -260,11 +266,17 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         return catalogue.catalogue(lang.code)
 
-    @app.get("/api/config/preview")
-    async def api_config_preview(
-        language: str, system_prompt: str | None = None, knowledge_prompt: str | None = None
-    ):
-        """Render a prompt (or the built-in one) for a language, as the agent will see it."""
+    @app.post("/api/config/preview")
+    async def api_config_preview(body: PreviewIn):
+        """Render a prompt (or the built-in one) for a language, as the agent will see it.
+
+        POST with a JSON body: a long prompt in the URL hits the proxies' URL limit (414).
+        """
+        language, system_prompt, knowledge_prompt = (
+            body.language,
+            body.system_prompt,
+            body.knowledge_prompt,
+        )
         try:
             lang = get_language(language)
             text = build_system_prompt(agent_name, lang, override=system_prompt or None)

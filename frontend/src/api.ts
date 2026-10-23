@@ -53,12 +53,13 @@ export const api = {
   config: () => get<AgentConfig>('/api/config'),
   configHistory: () => get<ConfigVersion[]>('/api/config/history'),
   models: (language: string) => get<ModelCatalogue>(`/api/models?language=${encodeURIComponent(language)}`),
-  previewPrompt: (language: string, systemPrompt: string | null, knowledgePrompt?: string | null) => {
-    const q = new URLSearchParams({ language });
-    if (systemPrompt) q.set('system_prompt', systemPrompt);
-    if (knowledgePrompt) q.set('knowledge_prompt', knowledgePrompt);
-    return get<{ language: string; prompt: string }>(`/api/config/preview?${q}`);
-  },
+  // POST: the draft prompt goes in the body, not the URL (a long Tamil prompt hit 414)
+  previewPrompt: (language: string, systemPrompt: string | null, knowledgePrompt?: string | null) =>
+    send<{ language: string; prompt: string }>('/api/config/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ language, system_prompt: systemPrompt || null, knowledge_prompt: knowledgePrompt || null }),
+    }),
   saveConfig: async (body: {
     system_prompt: string | null;
     temperature: number | null;

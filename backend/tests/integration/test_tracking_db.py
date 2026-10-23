@@ -64,7 +64,7 @@ def test_portal_api():
         assert client.get("/api/calls").status_code == 200
         config = client.get("/api/config").json()
         assert config["default_prompt"] and len(config["languages"]) == 11
-        preview = client.get("/api/config/preview", params={"language": "ta-IN"}).json()
+        preview = client.post("/api/config/preview", json={"language": "ta-IN"}).json()
         assert "Tamil" in preview["prompt"]
         assert client.get("/api/config/history").status_code == 200
         assert client.get(f"/api/calls/{uuid.uuid4()}").status_code == 404
