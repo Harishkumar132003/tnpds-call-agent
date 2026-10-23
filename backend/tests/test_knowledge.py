@@ -219,7 +219,10 @@ async def test_knowledge_tool_handler_returns_passages_and_speaks_filler():
     await tool.handle(empty)
     assert results[-1] == {"found": False, "reason": "empty question"}
 
-    assert "நிமிடம்" in searching_line("ta-IN")
+    from voice_agent.knowledge.tool import SEARCHING_LINES
+
+    picked = {searching_line("ta-IN") for _ in range(200)}
+    assert picked == set(SEARCHING_LINES["ta-IN"])  # all four Tamil lines are used
     assert searching_line("xx-XX") == searching_line("en-IN")
     assert tool.schema().standard_tools[0].name == "search_knowledge_base"
 

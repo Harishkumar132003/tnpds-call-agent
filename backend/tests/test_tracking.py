@@ -350,10 +350,6 @@ class FakeLangfuse:
         self.calls.append(("generation", kw))
         return self
 
-    def event(self, **kw):
-        self.calls.append(("event", kw))
-        return self
-
     def update(self, **kw):
         self.calls.append(("update", kw))
 
@@ -594,44 +590,6 @@ async def test_rewrite_input_is_not_written_to_postgres():
     assert all("rewrite_input" not in json.dumps(v) for v in turn if isinstance(v, str))
 
 
-async def test_call_log_lines_become_events_only_on_their_own_trace(make_settings):
-    import uuid
-
-    from loguru import logger
-
-    from voice_agent.tracking.langfuse_export import LangfuseExporter
-
-    settings = make_settings(
-        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
-    )
-    fake = FakeLangfuse()
-    call_id = uuid.uuid4()
-    exporter = LangfuseExporter(settings, CALL, call_id, client=fake, snapshot={"app": {"v": 1}})
-    exporter.start()
-    exporter.attach_logs()
-    with logger.contextualize(call_id=str(call_id)):
-        logger.warning("Query rewrite failed, falling back to translation")
-        logger.debug("too chatty for the trace")
-        for _ in range(3):
-            logger.warning("Message queue is full")
-    with logger.contextualize(call_id="another-call"):
-        logger.warning("belongs to another call")
-    logger.warning("no call at all")
-    await exporter.close("completed")
-    events = [kw for k, kw in fake.calls if k == "event"]
-    assert [e.get("input") for e in events[:2]] == [
-        "Query rewrite failed, falling back to translation",
-        "Message queue is full",  # stored once
-    ]
-    assert events[0]["level"] == "WARNING"
-    assert events[-1]["output"] == {"WARNING: Message queue is full": 3}
-    trace = next(kw for k, kw in fake.calls if k == "trace")
-    assert trace["metadata"]["app"] == {"v": 1} and trace["input"]["app"] == {"v": 1}
-    final = [kw for k, kw in fake.calls if k == "update"][-1]
-    assert final["metadata"]["warnings"] == 4 and final["metadata"]["distinct_warnings"] == 2
-    assert final["metadata"]["errors"] == 0
-
-
 async def test_search_span_shows_query_settings_and_rejected_sheets(make_settings):
     import uuid
 
@@ -684,5 +642,4 @@ async def test_search_span_shows_query_settings_and_rejected_sheets(make_setting
     assert [h["source"] for h in span["output"]["sent"]] == ["044.pdf"]
     assert span["output"]["not_sent"] == [{"source": "009.pdf", "chunk_index": 0, "score": 0.45}]
     assert span["start_time"].second == 1 and span["end_time"].second == 3
-    names = [kw["name"] for k, kw in fake.calls if k == "event"]
-    assert names == ["caller said", "agent interrupted by caller"]
+    assert not [k for k, _ in fake.calls if k == "event"]  # no events on traces

@@ -119,7 +119,6 @@ async def run_voice_session(
         recorder.start()
         if exporter is not None:
             exporter.start()
-            exporter.attach_logs()
 
     runner = WorkerRunner(handle_sigint=handle_sigint)
     started = time.monotonic()
@@ -135,10 +134,8 @@ async def run_voice_session(
     )
     end_reason = "completed"
     try:
-        # every log line of this call carries its call_id (Langfuse events per call)
-        with logger.contextualize(call_id=str(call_id)):
-            await runner.add_workers(voice_pipeline.worker)
-            await runner.run()
+        await runner.add_workers(voice_pipeline.worker)
+        await runner.run()
     except BaseException as exc:
         end_reason = f"error: {type(exc).__name__}"
         raise

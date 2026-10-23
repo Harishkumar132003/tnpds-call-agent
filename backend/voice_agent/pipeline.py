@@ -169,11 +169,11 @@ def build_voice_pipeline(
 def _register_knowledge_tool(llm: object, tts: object, tool: KnowledgeTool, language: str) -> None:
     """Expose the search function to the LLM and speak a filler line while it runs."""
     llm.register_function(TOOL_NAME, tool.handle)  # type: ignore[attr-defined]
-    filler = searching_line(language)
 
     @llm.event_handler("on_function_calls_started")  # type: ignore[attr-defined]
     async def on_function_calls_started(_service: object, function_calls: list) -> None:
         if any(getattr(call, "function_name", "") == TOOL_NAME for call in function_calls):
+            filler = searching_line(language)  # a different line each search
             logger.info(f"Searching knowledge base; telling the caller: {filler}")
             await tts.queue_frame(TTSSpeakFrame(filler, append_to_context=False))  # type: ignore[attr-defined]
 

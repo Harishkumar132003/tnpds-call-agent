@@ -13,7 +13,6 @@ character and ``saaras:v4`` per second; Langfuse then prices every turn.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -58,10 +57,6 @@ class LangfuseExporter:
         snapshot: dict[str, Any] | None = None,
     ) -> None:
         self._snapshot = snapshot or {}
-        self._log_sink: int | None = None
-        self._log_counts = {"WARNING": 0, "ERROR": 0, "CRITICAL": 0}
-        self._log_repeats: dict[tuple[str, str], int] = {}
-        """(level, message) -> times seen; repeats are counted, not stored again."""
         self._settings = settings
         self._call = call
         self._id = str(call_id)
@@ -112,63 +107,6 @@ class LangfuseExporter:
             self._disabled = True
             logger.warning(f"Langfuse: could not start trace: {exc}")
 
-    # -- the call's own log lines, as trace events -----------------------------
-
-    def attach_logs(self) -> None:
-        """Send this call's log lines to the trace as events.
-
-        Lines are matched by ``call_id`` in loguru's context (the session runs inside
-        ``logger.contextualize(call_id=...)``), so concurrent calls never mix. Our own
-        code is kept from INFO up; libraries (Pipecat, Sarvam, httpx) from WARNING up.
-        """
-        if self._disabled or self._trace is None or self._log_sink is not None:
-            return
-
-        def sink(message: Any) -> None:
-            record = message.record
-            if record["extra"].get("call_id") != self._id:
-                return
-            name = record["name"] or ""
-            if name.startswith("voice_agent.tracking.langfuse_export"):
-                return  # never trace our own tracing
-            level = record["level"].name
-            ours = name.startswith(("voice_agent", "__main__", "bot"))
-            if record["level"].no < (20 if ours else 30):
-                return
-            if level in self._log_counts:
-                self._log_counts[level] += 1
-            text = record["message"]
-            key = (level, text)
-            self._log_repeats[key] = self._log_repeats.get(key, 0) + 1
-            if self._log_repeats[key] > 1:
-                return  # stored once; the count goes on the trace at the end
-            with contextlib.suppress(Exception):  # tracing must never break logging
-                self._trace.event(
-                    name=f"log {level.lower()}: {text[:80]}",
-                    start_time=record["time"],
-                    level="ERROR"
-                    if level in ("ERROR", "CRITICAL")
-                    else "WARNING"
-                    if level == "WARNING"
-                    else "DEFAULT",
-                    status_message=text if level != "INFO" else None,
-                    input=text,
-                    metadata={
-                        "logger": name,
-                        "function": record["function"],
-                        "line": record["line"],
-                        "exception": str(record["exception"]) if record["exception"] else None,
-                    },
-                )
-
-        self._log_sink = logger.add(sink, level="DEBUG", enqueue=False, catch=True)
-
-    def detach_logs(self) -> None:
-        if self._log_sink is not None:
-            with contextlib.suppress(ValueError):
-                logger.remove(self._log_sink)
-            self._log_sink = None
-
     def turn_completed(self, turn: TurnRecord) -> None:
         if self._disabled or self._trace is None:
             return
@@ -181,31 +119,13 @@ class LangfuseExporter:
         if self._disabled or self._trace is None:
             return
         try:
-            self.detach_logs()
             ended = datetime.now(UTC)
-            repeated = {
-                f"{level}: {text}": count
-                for (level, text), count in self._log_repeats.items()
-                if count > 1
-            }
-            if repeated:
-                self._trace.event(
-                    name=f"log lines repeated ({len(repeated)} distinct)",
-                    start_time=ended,
-                    level="WARNING",
-                    output=dict(sorted(repeated.items(), key=lambda kv: -kv[1])),
-                )
             self._trace.update(
                 output="\n".join(self._transcript),
                 metadata={
                     "end_reason": end_reason,
                     "turns": self._turns,
                     "duration_secs": round((ended - self._started_at).total_seconds(), 1),
-                    "warnings": self._log_counts["WARNING"],
-                    "distinct_warnings": sum(
-                        1 for level, _ in self._log_repeats if level == "WARNING"
-                    ),
-                    "errors": self._log_counts["ERROR"] + self._log_counts["CRITICAL"],
                 },
             )
             await asyncio.wait_for(asyncio.to_thread(self._client.flush), FLUSH_TIMEOUT_SECS)
@@ -238,16 +158,6 @@ class LangfuseExporter:
             metadata=latency_meta,
         )
         heard = [_parse_time(m.get("at")) for m in turn.user_messages]
-        for m in turn.user_messages:  # each separate utterance, before they were merged
-            span.event(name="caller said", start_time=_parse_time(m.get("at")), input=m.get("text"))
-        if turn.interrupted:
-            span.event(
-                name="agent interrupted by caller",
-                start_time=end,
-                level="WARNING",
-                output=turn.assistant_text,
-                metadata={"spoken_before_interruption": turn.assistant_text},
-            )
         if turn.stt_audio_seconds:
             span.generation(
                 name=f"{name} stt",

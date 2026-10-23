@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,7 +24,12 @@ MAX_QUESTIONS = 4  # searched in parallel per tool call
 
 # Spoken the moment the LLM decides to search, so the caller is never left in silence.
 SEARCHING_LINES = {
-    "ta-IN": "ஒரு நிமிடம், நான் பார்க்கிறேன்.",
+    "ta-IN": (
+        "சரி, இருங்க… பாத்துச் சொல்றேன்.",
+        "சரி, ஒரு தடவை செக் பண்ணிப் பாத்துட்டுச் சொல்றேன்.",
+        "சரிங்க, இதோ பாத்துட்டு இருக்கேன்.",
+        "umm.. சரி, பாத்துட்டு சொல்றேன்.",
+    ),
     "hi-IN": "एक मिनट, मैं देखती हूँ।",
     "en-IN": "One moment, let me check.",
     "bn-IN": "এক মিনিট, আমি দেখছি।",
@@ -61,7 +67,9 @@ calling the helpline.
 
 
 def searching_line(language_code: str) -> str:
-    return SEARCHING_LINES.get(language_code, SEARCHING_LINES["en-IN"])
+    """A filler line for the language; picked at random when there are several."""
+    lines = SEARCHING_LINES.get(language_code, SEARCHING_LINES["en-IN"])
+    return random.choice(lines) if isinstance(lines, tuple) else lines
 
 
 @dataclass(frozen=True)
