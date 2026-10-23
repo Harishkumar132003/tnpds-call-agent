@@ -94,7 +94,12 @@ async def run_voice_session(
         )
         recorder = CallRecorder(pool, info, call_id=call_id)
         if langfuse_configured(settings):
-            exporter = LangfuseExporter(settings, info, call_id)
+            exporter = LangfuseExporter(
+                settings,
+                info,
+                call_id,
+                snapshot=_debug_snapshot(settings, config, audio_rates, knowledge_tool),
+            )
         tracker = ConversationTracker(
             recorder, latency_observer, extra_sinks=[exporter] if exporter else None
         )
@@ -102,9 +107,19 @@ async def run_voice_session(
         if knowledge_tool is not None:
             tracker.attach_knowledge(knowledge_tool)
         voice_pipeline.worker.add_observer(tracker.usage_observer())
+        if exporter is not None:  # full LLM input/output per call, for debugging in Langfuse
+            from pipecat.services.llm_service import LLMService
+
+            llm = next(
+                (p for p in voice_pipeline.pipeline.processors if isinstance(p, LLMService)), None
+            )
+            if llm is not None and hasattr(llm, "on_request"):
+                tracker.log_llm_requests()
+                llm.on_request = tracker.on_llm_request
         recorder.start()
         if exporter is not None:
             exporter.start()
+            exporter.attach_logs()
 
     runner = WorkerRunner(handle_sigint=handle_sigint)
     started = time.monotonic()
@@ -120,8 +135,10 @@ async def run_voice_session(
     )
     end_reason = "completed"
     try:
-        await runner.add_workers(voice_pipeline.worker)
-        await runner.run()
+        # every log line of this call carries its call_id (Langfuse events per call)
+        with logger.contextualize(call_id=str(call_id)):
+            await runner.add_workers(voice_pipeline.worker)
+            await runner.run()
     except BaseException as exc:
         end_reason = f"error: {type(exc).__name__}"
         raise
@@ -134,6 +151,89 @@ async def run_voice_session(
             await recorder.close(end_reason)
         if exporter is not None:
             await exporter.close(end_reason)
+
+
+def _git_commit() -> str:
+    """Code version for traces: APP_VERSION if set (Docker), else the git commit."""
+    import os
+    import subprocess
+
+    if os.environ.get("APP_VERSION"):
+        return os.environ["APP_VERSION"]
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() + ("+uncommitted" if dirty.stdout.strip() else "")
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _debug_snapshot(
+    settings: Settings, config: AgentConfig, audio_rates: AudioRates, tool: KnowledgeTool | None
+) -> dict:
+    """Everything that shapes this call's behaviour, stored on its Langfuse trace."""
+    import platform
+
+    import pipecat
+
+    return {
+        "app": {
+            "version": _git_commit(),
+            "pipecat": getattr(pipecat, "__version__", "?"),
+            "python": platform.python_version(),
+        },
+        "config": {
+            "version": config.id,
+            "language": settings.agent_language,
+            "temperature": config.temperature
+            if config.temperature is not None
+            else settings.llm_temperature,
+            "greeting": config.greeting or settings.agent_greeting,
+            "custom_system_prompt": bool(config.system_prompt),
+            "custom_knowledge_rules": bool(config.knowledge_prompt),
+            "custom_rewrite_prompt": bool(config.rewrite_prompt),
+            "idle_prompt_secs": config.idle_prompt_secs
+            if config.idle_prompt_secs is not None
+            else settings.idle_prompt_secs,
+            "pronunciation_dictionary": config.tts_dict_id,
+            "pronunciation_entries": len(config.pronunciations or []),
+        },
+        "models": {
+            "stt": settings.sarvam_stt_model,
+            "stt_mode": settings.sarvam_stt_mode,
+            "llm": settings.llm_model,
+            "reasoning_effort": settings.llm_reasoning_effort,
+            "tts": settings.sarvam_tts_model,
+            "voice": settings.sarvam_tts_speaker,
+            "pace": settings.sarvam_tts_pace,
+            "translate": settings.translate_model,
+            "embedding": settings.embedding_model,
+        },
+        "knowledge": {
+            "enabled": tool is not None,
+            "query_rewrite": settings.knowledge_query_rewrite,
+            "top_k": settings.knowledge_top_k,
+            "min_score": settings.knowledge_min_score,
+            "keep_best": settings.knowledge_keep_best,
+            "collection": settings.qdrant_collection,
+            "whole_document": settings.knowledge_whole_document,
+        },
+        "audio": {"input_hz": audio_rates.input_hz, "output_hz": audio_rates.output_hz},
+    }
 
 
 def _startup_timing_logger() -> StartupTimingObserver:

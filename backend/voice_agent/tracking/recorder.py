@@ -55,6 +55,11 @@ class TurnRecord:
     completion_tokens: int | None = None
     tts_characters: int | None = None
     stt_audio_seconds: float | None = None
+    user_messages: list[dict[str, object]] = field(default_factory=list)
+    """Langfuse only: each separate caller utterance with its time (before merging)."""
+    llm_calls: list[dict[str, object]] = field(default_factory=list)
+    """Langfuse only: every LLM request of this turn exactly as sent (system prompt, all
+    messages, tools) with its reply, tool calls and usage. Not stored in Postgres."""
 
 
 @dataclass
@@ -183,7 +188,7 @@ class CallRecorder:
             t.tts_ttfb_ms,
             t.interrupted,
             json.dumps(t.contributions),
-            json.dumps(t.searches),
+            json.dumps([{k: v for k, v in x.items() if k != "rewrite_input"} for x in t.searches]),
             t.prompt_tokens,
             t.completion_tokens,
             t.tts_characters,

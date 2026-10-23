@@ -350,6 +350,10 @@ class FakeLangfuse:
         self.calls.append(("generation", kw))
         return self
 
+    def event(self, **kw):
+        self.calls.append(("event", kw))
+        return self
+
     def update(self, **kw):
         self.calls.append(("update", kw))
 
@@ -465,3 +469,220 @@ async def test_langfuse_exporter_costs_translation_per_character(make_settings):
     assert gen["usage"] == {"input": len(question), "unit": "CHARACTERS"}
     assert gen["output"] == "What is needed?"
     assert not [kw for k, kw in fake.calls if k == "generation" and "embedding" in kw["name"]]
+
+
+async def test_full_llm_input_and_output_reach_langfuse_per_call(make_settings):
+    import uuid
+
+    from pipecat.frames.frames import (
+        FunctionCallInProgressFrame,
+        LLMFullResponseEndFrame,
+        LLMTextFrame,
+    )
+    from pipecat.observers.base_observer import FramePushed
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    exporter = LangfuseExporter(settings, CALL, uuid.uuid4(), client=fake)
+    exporter.start()
+    recorder = CallRecorder(FakePool(), CALL)
+    observer, user, assistant = Events(), Events(), Events()
+    tracker = ConversationTracker(recorder, observer, extra_sinks=[exporter])
+    tracker.attach(user, assistant)  # type: ignore[arg-type]
+    tracker.log_llm_requests()
+    frames = tracker.usage_observer()
+
+    async def push(frame):
+        await frames.on_push_frame(
+            FramePushed(source=None, destination=None, frame=frame, direction=None, timestamp=0)
+        )
+
+    system = {"role": "system", "content": "You are the agent. " * 200}  # no size limit
+    await user.fire(
+        "on_user_turn_message_added", UserTurnMessageAddedMessage(content="கேன்சல்", timestamp="t")
+    )
+    # call 1: the model decides to search
+    tracker.on_llm_request(
+        {
+            "model": "sarvam-105b",
+            "messages": [system, {"role": "user", "content": "கேன்சல்"}],
+            "tools": [{"type": "function", "function": {"name": "search_knowledge_base"}}],
+            "temperature": 0.3,
+            "stream": True,
+            "extra_body": {"x": 1},
+        }
+    )
+    await push(FunctionCallInProgressFrame("search_knowledge_base", "t1", {"questions": ["q"]}))
+    await push(LLMFullResponseEndFrame())
+    # call 2: the answer, with the sheet in the input
+    tracker.on_llm_request(
+        {"model": "sarvam-105b", "messages": [system, {"role": "tool", "content": "sheet"}]}
+    )
+    await push(LLMTextFrame("சரி, "))
+    await push(LLMTextFrame("surrender பண்ணலாம்."))
+    await push(LLMFullResponseEndFrame())
+    await assistant.fire(
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(
+            content="சரி, surrender பண்ணலாம்.", interrupted=False, timestamp="t"
+        ),
+    )
+    await exporter.close("completed")
+    gens = [kw for k, kw in fake.calls if k == "generation" and " llm " in kw["name"]]
+    assert [g["name"] for g in gens] == ["turn 0 llm 1 (tool call)", "turn 0 llm 2"]
+    assert gens[0]["input"][0] == system  # whole system prompt, untrimmed
+    assert gens[0]["output"]["tool_calls"][0]["arguments"] == {"questions": ["q"]}
+    assert gens[0]["model_parameters"] == {"model": "sarvam-105b", "temperature": 0.3}
+    assert gens[0]["metadata"]["tools"][0]["function"]["name"] == "search_knowledge_base"
+    assert gens[1]["input"][1] == {"role": "tool", "content": "sheet"}
+    assert gens[1]["output"] == "சரி, surrender பண்ணலாம்."
+    # the single summary llm generation is replaced by the per-call ones
+    assert not [kw for k, kw in fake.calls if k == "generation" and kw["name"] == "turn 0 llm"]
+
+
+async def test_rewrite_generation_stores_its_full_request(make_settings):
+    import uuid
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    exporter = LangfuseExporter(settings, CALL, uuid.uuid4(), client=fake)
+    exporter.start()
+    request = [
+        {"role": "system", "content": "You write the search question..."},
+        {"role": "user", "content": "Earlier caller messages ...\nLATEST caller message:\nகேன்சல்"},
+    ]
+    exporter.turn_completed(
+        TurnRecord(
+            turn_index=1,
+            user_text="கேன்சல்",
+            assistant_text="a",
+            searches=[
+                {
+                    "question": "கேன்சல்",
+                    "rewritten_query": "How to surrender smart card?",
+                    "rewrite_tokens": [300, 8],
+                    "rewrite_input": request,
+                    "hits": [],
+                }
+            ],
+        )
+    )
+    await exporter.close("completed")
+    [gen] = [kw for k, kw in fake.calls if k == "generation" and kw["name"].endswith("rewrite")]
+    assert gen["input"] == request and gen["output"] == "How to surrender smart card?"
+
+
+async def test_rewrite_input_is_not_written_to_postgres():
+    pool = FakePool()
+    recorder = CallRecorder(pool, CALL)
+    recorder.start()
+    recorder.turn_completed(
+        TurnRecord(
+            turn_index=1, searches=[{"question": "q", "rewrite_input": [{"role": "system"}]}]
+        )
+    )
+    await recorder.close("completed")
+    [turn] = [a for sql, a in pool.statements if sql.startswith("insert into turns")]
+    assert all("rewrite_input" not in json.dumps(v) for v in turn if isinstance(v, str))
+
+
+async def test_call_log_lines_become_events_only_on_their_own_trace(make_settings):
+    import uuid
+
+    from loguru import logger
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    call_id = uuid.uuid4()
+    exporter = LangfuseExporter(settings, CALL, call_id, client=fake, snapshot={"app": {"v": 1}})
+    exporter.start()
+    exporter.attach_logs()
+    with logger.contextualize(call_id=str(call_id)):
+        logger.warning("Query rewrite failed, falling back to translation")
+        logger.debug("too chatty for the trace")
+        for _ in range(3):
+            logger.warning("Message queue is full")
+    with logger.contextualize(call_id="another-call"):
+        logger.warning("belongs to another call")
+    logger.warning("no call at all")
+    await exporter.close("completed")
+    events = [kw for k, kw in fake.calls if k == "event"]
+    assert [e.get("input") for e in events[:2]] == [
+        "Query rewrite failed, falling back to translation",
+        "Message queue is full",  # stored once
+    ]
+    assert events[0]["level"] == "WARNING"
+    assert events[-1]["output"] == {"WARNING: Message queue is full": 3}
+    trace = next(kw for k, kw in fake.calls if k == "trace")
+    assert trace["metadata"]["app"] == {"v": 1} and trace["input"]["app"] == {"v": 1}
+    final = [kw for k, kw in fake.calls if k == "update"][-1]
+    assert final["metadata"]["warnings"] == 4 and final["metadata"]["distinct_warnings"] == 2
+    assert final["metadata"]["errors"] == 0
+
+
+async def test_search_span_shows_query_settings_and_rejected_sheets(make_settings):
+    import uuid
+
+    from voice_agent.tracking.langfuse_export import LangfuseExporter
+
+    settings = make_settings(
+        langfuse_host="http://x", langfuse_public_key="pk", langfuse_secret_key="sk"
+    )
+    fake = FakeLangfuse()
+    exporter = LangfuseExporter(settings, CALL, uuid.uuid4(), client=fake)
+    exporter.start()
+    exporter.turn_completed(
+        TurnRecord(
+            turn_index=1,
+            user_text="கேன்சல்",
+            user_messages=[{"at": "2026-10-23T05:00:00+00:00", "text": "கேன்சல்"}],
+            interrupted=True,
+            assistant_text="சரி, நீங்க",
+            searches=[
+                {
+                    "question": "கேன்சல்",
+                    "rewritten_query": "How to surrender smart card?",
+                    "started_at": "2026-10-23T05:00:01+00:00",
+                    "at": "2026-10-23T05:00:03+00:00",
+                    "settings": {"limit": 5, "min_score": 0.5},
+                    "hits": [
+                        {
+                            "source": "044.pdf",
+                            "chunk_index": 0,
+                            "score": 0.65,
+                            "text": "t",
+                            "used": True,
+                        },
+                        {
+                            "source": "009.pdf",
+                            "chunk_index": 0,
+                            "score": 0.45,
+                            "text": "t",
+                            "used": False,
+                        },
+                    ],
+                }
+            ],
+        )
+    )
+    await exporter.close("completed")
+    span = next(kw for k, kw in fake.calls if k == "span" and kw["name"] == "knowledge search")
+    assert span["input"]["searched_for"] == "How to surrender smart card?"
+    assert span["input"]["how"] == "rewrite" and span["input"]["settings"]["min_score"] == 0.5
+    assert [h["source"] for h in span["output"]["sent"]] == ["044.pdf"]
+    assert span["output"]["not_sent"] == [{"source": "009.pdf", "chunk_index": 0, "score": 0.45}]
+    assert span["start_time"].second == 1 and span["end_time"].second == 3
+    names = [kw["name"] for k, kw in fake.calls if k == "event"]
+    assert names == ["caller said", "agent interrupted by caller"]

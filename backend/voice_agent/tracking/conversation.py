@@ -11,10 +11,16 @@ Sources (all event callbacks, no frame inspection of our own):
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Protocol
 
-from pipecat.frames.frames import MetricsFrame
+from pipecat.frames.frames import (
+    FunctionCallInProgressFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    MetricsFrame,
+)
 from pipecat.metrics.metrics import LLMUsageMetricsData, STTUsageMetricsData, TTSUsageMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, UserBotLatencyObserver
@@ -51,6 +57,7 @@ class ConversationTracker:
     ) -> None:
         self._sinks: list[TurnSink] = [recorder, *(extra_sinks or [])]
         self._turn = TurnRecord(turn_index=0)
+        self._log_llm = False
         self._register_latency_events(latency_observer)
 
     def usage_observer(self) -> BaseObserver:
@@ -65,18 +72,81 @@ class ConversationTracker:
                 self._seen: dict[int, None] = {}
 
             async def on_push_frame(self, data: FramePushed) -> None:
-                if not isinstance(data.frame, MetricsFrame):
+                frame = data.frame
+                if not isinstance(
+                    frame,
+                    (
+                        MetricsFrame,
+                        LLMTextFrame,
+                        FunctionCallInProgressFrame,
+                        LLMFullResponseEndFrame,
+                    ),
+                ):
                     return
-                if data.frame.id in self._seen:
+                if frame.id in self._seen:
                     return
-                self._seen[data.frame.id] = None
+                self._seen[frame.id] = None
                 if len(self._seen) > 2000:  # bounded memory for long calls
                     for key in list(self._seen)[:1000]:
                         del self._seen[key]
-                for item in data.frame.data:
-                    tracker._add_usage(item)
+                if isinstance(frame, MetricsFrame):
+                    for item in frame.data:
+                        tracker._add_usage(item)
+                elif tracker._log_llm:
+                    tracker._on_llm_frame(frame)
 
         return _UsageObserver()
+
+    # ---- full LLM input/output per call (Langfuse) ----
+    def log_llm_requests(self) -> None:
+        """Keep every LLM request and reply on the turn, for Langfuse (no size limit)."""
+        self._log_llm = True
+
+    def on_llm_request(self, params: dict) -> None:
+        """Called with each exact chat request the LLM service sends."""
+        if not self._log_llm:
+            return
+        request = json.loads(json.dumps(params, default=str))  # a copy, JSON-safe
+        self._turn.llm_calls.append(
+            {
+                "started_at": datetime.now(UTC).isoformat(),
+                "ended_at": None,
+                "model": request.get("model"),
+                "input": request.get("messages"),
+                "tools": request.get("tools"),
+                "settings": {  # model parameters as plain values (Langfuse rejects nested ones)
+                    k: v
+                    for k, v in request.items()
+                    if k not in ("messages", "tools", "stream")
+                    and isinstance(v, (str, int, float, bool))
+                    and v != "NOT_GIVEN"
+                },
+                "output": "",
+                "tool_calls": [],
+                "usage": None,
+            }
+        )
+
+    def _on_llm_frame(self, frame: object) -> None:
+        calls = self._turn.llm_calls
+        if not calls:
+            return
+        call = calls[-1]
+        if isinstance(frame, FunctionCallInProgressFrame):
+            # Pipecat announces tool calls after the response-end frame: use the latest call
+            call["tool_calls"].append(
+                {
+                    "name": frame.function_name,
+                    "id": frame.tool_call_id,
+                    "arguments": frame.arguments,
+                }
+            )
+        elif call["ended_at"] is not None:
+            return
+        elif isinstance(frame, LLMTextFrame):
+            call["output"] += frame.text
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            call["ended_at"] = datetime.now(UTC).isoformat()
 
     def _add_usage(self, item: object) -> None:
         turn = self._turn
@@ -85,6 +155,14 @@ class ConversationTracker:
             turn.completion_tokens = (turn.completion_tokens or 0) + (
                 item.value.completion_tokens or 0
             )
+            if self._log_llm:  # usage of the latest call of this turn
+                for call in reversed(turn.llm_calls):
+                    if call["usage"] is None:
+                        call["usage"] = {
+                            "input": item.value.prompt_tokens or 0,
+                            "output": item.value.completion_tokens or 0,
+                        }
+                        break
         elif isinstance(item, TTSUsageMetricsData):
             turn.tts_characters = (turn.tts_characters or 0) + int(item.value)
         elif isinstance(item, STTUsageMetricsData):
@@ -106,6 +184,7 @@ class ConversationTracker:
             # A caller may be split into several user messages before the agent
             # answers (end-of-turn fired mid-thought); keep all of them.
             text = message.content.strip()
+            self._turn.user_messages.append({"at": datetime.now(UTC).isoformat(), "text": text})
             if self._turn.user_text:
                 self._turn.user_text = f"{self._turn.user_text} {text}"
             else:

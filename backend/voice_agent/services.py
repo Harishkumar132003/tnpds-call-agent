@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from pipecat.services.llm_service import LLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.sarvam.llm import SarvamLLMService
@@ -172,6 +173,18 @@ class SarvamCatalogueLLMService(SarvamLLMService):
 
     _SUPPORTED_MODELS = frozenset(m.id for m in catalogue.LLM_MODELS)
     _REASONING_MODELS = frozenset(m.id for m in catalogue.LLM_MODELS)
+
+    on_request = None
+    """Optional ``callable(params)`` given each exact chat request (Langfuse LLM logging)."""
+
+    def build_chat_completion_params(self, params_from_context):
+        params = super().build_chat_completion_params(params_from_context)
+        if self.on_request is not None:
+            try:
+                self.on_request(params)
+            except Exception as exc:  # logging must never break a reply
+                logger.warning(f"LLM request logging failed: {exc}")
+        return params
 
 
 def build_llm(

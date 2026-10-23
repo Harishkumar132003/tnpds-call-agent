@@ -50,6 +50,8 @@ class SearchResult:
     """KNOWLEDGE_QUERY_REWRITE: the English query written from the caller's messages."""
     rewrite_ms: int = 0
     rewrite_tokens: tuple[int, int] = (0, 0)
+    rewrite_input: tuple = ()
+    """The rewrite's exact chat messages (for Langfuse only)."""
 
 
 class KnowledgeService:
@@ -165,6 +167,7 @@ class KnowledgeService:
             rewritten_query=rewrite.query,
             rewrite_ms=rewrite_ms,
             rewrite_tokens=(rewrite.prompt_tokens, rewrite.completion_tokens),
+            rewrite_input=rewrite.request,
         )
 
     async def delete(self, document_id: str) -> bool:

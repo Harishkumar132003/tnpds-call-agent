@@ -46,6 +46,8 @@ class Rewrite:
     query: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    request: tuple = ()
+    """The exact chat messages sent (system prompt + caller messages), for Langfuse."""
 
 
 def history_from_messages(messages: list[Any], limit: int = HISTORY_MESSAGES) -> list[str]:
@@ -125,6 +127,7 @@ class QueryRewriter:
         usage = data.get("usage") or {}
         return Rewrite(
             query,
-            int(usage.get("prompt_tokens") or 0),
-            int(usage.get("completion_tokens") or 0),
+            request=tuple(body["messages"]),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
         )

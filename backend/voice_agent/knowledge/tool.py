@@ -80,6 +80,10 @@ class SearchRecord:
     rewritten_query: str | None = None
     rewrite_ms: int = 0
     rewrite_tokens: tuple[int, int] = (0, 0)
+    rewrite_input: tuple = ()
+    started_at: str | None = None
+    settings: dict[str, Any] = field(default_factory=dict)
+    """The selection rules used (limit, min_score, keep_best), for debugging."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +98,9 @@ class SearchRecord:
             "rewritten_query": self.rewritten_query,
             "rewrite_ms": self.rewrite_ms,
             "rewrite_tokens": list(self.rewrite_tokens),
+            "rewrite_input": list(self.rewrite_input),
+            "started_at": self.started_at,
+            "settings": self.settings,
         }
 
 
@@ -185,11 +192,15 @@ class KnowledgeTool:
         except Exception as exc:
             return question, None, f"{exc} (qdrant={self.service.qdrant_url})"
 
-    async def _record(self, question: str, result: Any, error: str | None) -> list[Any]:
+    async def _record(
+        self, question: str, result: Any, error: str | None, started_at: str | None = None
+    ) -> list[Any]:
         """Log and notify one question's search; return its hits above the floor."""
         if error is not None:
             logger.warning(f"Knowledge: search failed for {question!r}: {error}")
-            await self._notify(SearchRecord(question, None, 0, 0, 0, [], error=error[:300]))
+            await self._notify(
+                SearchRecord(question, None, 0, 0, 0, [], error=error[:300], started_at=started_at)
+            )
             return []
         if result.rewritten_query:
             logger.info(f"Knowledge: searching with the rewritten query {result.rewritten_query!r}")
@@ -235,6 +246,14 @@ class KnowledgeTool:
                 rewritten_query=result.rewritten_query,
                 rewrite_ms=result.rewrite_ms,
                 rewrite_tokens=result.rewrite_tokens,
+                rewrite_input=result.rewrite_input,
+                started_at=started_at,
+                settings={
+                    "limit": self.limit,
+                    "min_score": self.min_score,
+                    "keep_best": self.keep_best,
+                    "floor": MIN_SCORE,
+                },
             )
         )
         return selected
@@ -260,6 +279,7 @@ class KnowledgeTool:
             await params.result_callback({"found": False, "reason": "empty question"})
             return
         logger.info(f"Knowledge: LLM asked to search for {questions!r}")
+        started_at = datetime.now(UTC).isoformat()
         outcomes = await self._rewritten_outcomes(params) if self.service.query_rewrite else None
         if outcomes is None:
             # One search per question, in parallel: translation + embedding + Qdrant each
@@ -272,7 +292,7 @@ class KnowledgeTool:
         failures = 0
         for question, result, error in outcomes:
             failures += error is not None
-            hits = await self._record(question, result, error)
+            hits = await self._record(question, result, error, started_at)
             sources = []
             for hit in hits:
                 sources.append(hit.document_name)
