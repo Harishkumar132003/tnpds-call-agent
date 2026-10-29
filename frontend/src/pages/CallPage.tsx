@@ -175,7 +175,12 @@ export function CallPage() {
                 {t.turn_index > 0 && (
                   <div className="line line--user">
                     <span className="line__who">User</span>
-                    <span className={`line__text${t.user_text ? '' : ' line__text--empty'}`}>{t.user_text || 'nothing transcribed'}</span>
+                    <span className={`line__text${t.user_text ? '' : ' line__text--empty'}`}>
+                      {t.user_text || 'nothing transcribed'}
+                      {t.topic && (
+                        <> <span className={`pill ${t.topic.decision === 'NEW' ? 'pill--violet' : 'pill--idle'}`} title={t.topic.reason ?? ''}>{t.topic.decision === 'NEW' ? 'new question · context restarted' : 'follow-up'}</span></>
+                      )}
+                    </span>
                   </div>
                 )}
                 <div className="line line--bot">

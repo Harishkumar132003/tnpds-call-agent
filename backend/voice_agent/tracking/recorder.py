@@ -51,6 +51,8 @@ class TurnRecord:
     """Pipecat's non-overlapping parts of the latency interval, in order."""
     searches: list[dict[str, object]] = field(default_factory=list)
     """Knowledge-base searches made while answering this turn, with retrieved chunks."""
+    topic: dict[str, object] | None = None
+    """LLM_TOPIC_CONTEXT: {"decision": NEW|FOLLOW_UP, "reason", "text"} for the caller's turn."""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     tts_characters: int | None = None
@@ -170,9 +172,9 @@ class CallRecorder:
             "insert into turns (call_id, turn_index, user_text, assistant_text, user_spoke_at, "
             "bot_spoke_at, completed_at, response_latency_ms, turn_release_ms, stt_ttfb_ms, "
             "llm_ttfb_ms, tts_ttfb_ms, interrupted, contributions, searches, "
-            "prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds) "
+            "prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds, topic) "
             "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, "
-            "$15::jsonb, $16, $17, $18, $19) "
+            "$15::jsonb, $16, $17, $18, $19, $20::jsonb) "
             "on conflict (call_id, turn_index) do nothing",
             self.id,
             t.turn_index,
@@ -193,6 +195,7 @@ class CallRecorder:
             t.completion_tokens,
             t.tts_characters,
             t.stt_audio_seconds,
+            json.dumps(t.topic) if t.topic else None,
         )
 
     async def _finish_call(self, conn: asyncpg.Connection, ended_at: datetime, reason: str) -> None:

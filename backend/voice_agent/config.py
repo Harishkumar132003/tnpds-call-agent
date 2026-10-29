@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     llm_provider: LLMProvider = LLMProvider.SARVAM
     llm_model: str = "sarvam-105b"
     llm_temperature: float | None = Field(default=None, ge=0, le=2)
+    llm_topic_context: bool = False
+    """Before each reply, a small LLM check decides if the caller's turn is a NEW question
+    (context restarts there) or a FOLLOW-UP (context continues). Off = whole conversation."""
+    topic_check_timeout_secs: float = Field(default=2.5, gt=0)
     llm_reasoning_effort: Literal["none", "low", "medium", "high"] | None = "none"
     """Sarvam's reasoning models think before answering, which adds 1-2 s to every reply.
     "none" turns that off (measured: first word in ~0.3 s instead of 1-2.4 s)."""
@@ -99,10 +103,8 @@ class Settings(BaseSettings):
     """Index each uploaded document as one chunk (one FAQ sheet = one topic)."""
     knowledge_top_k: int = Field(default=5, ge=1, le=10)
     """Most sheets one question's search hands to the LLM."""
-    knowledge_min_score: float = Field(default=0.50, ge=0, le=1)
-    """Send every sheet whose similarity reaches this score (0.50 = 50% in the portal)."""
-    knowledge_keep_best: bool = True
-    """When no sheet reaches KNOWLEDGE_MIN_SCORE, still send the best one (if above 25%)."""
+    knowledge_min_score: float = Field(default=0.40, ge=0, le=1)
+    """Send every sheet whose similarity reaches this score; below it nothing is sent."""
     knowledge_query_rewrite: bool = False
     """Rewrite each knowledge question + recent conversation into an English query first."""
     knowledge_rewrite_timeout_secs: float = Field(default=3.0, gt=0)

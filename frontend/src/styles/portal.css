@@ -230,3 +230,50 @@
 .voice__name { font-weight: 500; }
 .voice__meta { font-size: var(--text-2xs); letter-spacing: 0.04em; color: var(--ink-faint); }
 .voice.is-on .voice__meta { color: rgba(255, 255, 255, 0.75); }
+
+/* ===== Config page: prompt pipeline ======================================= */
+/* The agent's prompt steps in run order; one is selected and edited below. */
+.flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--s2) 0;
+  margin-bottom: var(--s4);
+}
+.flow__item { display: flex; align-items: center; min-width: 0; }
+.flow__arrow { padding: 0 var(--s2); color: var(--ink-faint); font-size: var(--text-sm); }
+.flow__step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px var(--s4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  min-width: 150px;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), background 0.15s var(--ease);
+}
+.flow__step:hover { background: var(--surface-hover); border-color: var(--rule-strong); }
+.flow__step.is-on { border-color: var(--violet); background: var(--violet-pale); box-shadow: 0 0 0 1px var(--violet); }
+.flow__name { font-size: var(--text-sm); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.flow__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); display: inline-block; }
+.flow__role { font-size: var(--text-2xs); color: var(--ink-muted); }
+.flow__step .pill { margin-top: 2px; }
+
+/* Editor head: step title + status pills, above the textarea. */
+.flow-editor__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2) var(--s3);
+  flex-wrap: wrap;
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--s4);
+}
+.flow-editor__text { flex: 1 1 320px; min-width: 0; }
+.flow-editor__title { margin: 0 0 2px; font-size: var(--text-md); font-weight: 600; }
+.flow-editor__sub { margin: 0; font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.5; max-width: 70ch; }
+.flow-editor__head .pill, .flow-editor__head .btn { align-self: center; }

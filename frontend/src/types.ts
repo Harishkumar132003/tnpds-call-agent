@@ -50,6 +50,8 @@ export interface Turn {
   contributions: { key: string; label: string; owner: string; ms: number }[];
   /** Knowledge-base searches made while answering this turn. */
   searches: TurnSearch[];
+  /** LLM_TOPIC_CONTEXT: was the caller's turn a new question or a follow-up? */
+  topic?: { decision: 'NEW' | 'FOLLOW_UP'; reason: string | null; text: string | null } | null;
 }
 
 export interface TurnSearch {
@@ -96,9 +98,16 @@ export interface AgentConfig {
   idle_prompt_secs: number | null;
   idle_check_line: string | null;
   idle_goodbye_line: string | null;
-  /** Rules appended to the prompt when the search tool is on; null = built-in text. */
-  knowledge_prompt: string | null;
-  knowledge_prompt_default: string;
+  /** Per-step LLM rules when the search tool is on; null = built-in text.
+   *  LLM 1 decides and searches; LLM 2 answers from the search results. */
+  router_prompt: string | null;
+  router_prompt_default: string;
+  answer_prompt: string | null;
+  answer_prompt_default: string;
+  /** LLM_TOPIC_CONTEXT: the NEW/FOLLOW_UP topic classifier's prompt and whether the flag is on. */
+  topic_prompt: string | null;
+  topic_prompt_default: string;
+  topic_context_on: boolean;
   /** KNOWLEDGE_QUERY_REWRITE: saved rewrite instructions (null = built-in) and whether the flag is on. */
   rewrite_prompt: string | null;
   rewrite_prompt_default: string;
@@ -132,7 +141,9 @@ export interface ConfigVersion {
   idle_prompt_secs: number | null;
   idle_check_line: string | null;
   idle_goodbye_line: string | null;
-  knowledge_prompt: string | null;
+  router_prompt: string | null;
+  answer_prompt: string | null;
+  topic_prompt?: string | null;
   rewrite_prompt?: string | null;
   pronunciations: { word: string; spoken: string }[] | null;
   tts_dict_id: string | null;

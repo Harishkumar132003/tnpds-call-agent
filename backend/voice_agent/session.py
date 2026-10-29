@@ -62,7 +62,6 @@ async def run_voice_session(
             knowledge_service,
             limit=settings.knowledge_top_k,
             min_score=settings.knowledge_min_score,
-            keep_best=settings.knowledge_keep_best,
             rewrite_prompt=config.rewrite_prompt,
         )
         if knowledge_service
@@ -81,7 +80,9 @@ async def run_voice_session(
         idle_prompt_secs=config.idle_prompt_secs,
         idle_check_line=config.idle_check_line,
         idle_goodbye_line=config.idle_goodbye_line,
-        knowledge_prompt=config.knowledge_prompt,
+        router_prompt=config.router_prompt,
+        answer_prompt=config.answer_prompt,
+        topic_prompt=config.topic_prompt,
         tts_dict_id=config.tts_dict_id,
     )
 
@@ -107,15 +108,19 @@ async def run_voice_session(
         if knowledge_tool is not None:
             tracker.attach_knowledge(knowledge_tool)
         voice_pipeline.worker.add_observer(tracker.usage_observer())
-        if exporter is not None:  # full LLM input/output per call, for debugging in Langfuse
-            from pipecat.services.llm_service import LLMService
+        from pipecat.services.llm_service import LLMService
 
-            llm = next(
-                (p for p in voice_pipeline.pipeline.processors if isinstance(p, LLMService)), None
-            )
-            if llm is not None and hasattr(llm, "on_request"):
-                tracker.log_llm_requests()
-                llm.on_request = tracker.on_llm_request
+        llm = next(
+            (p for p in voice_pipeline.pipeline.processors if isinstance(p, LLMService)), None
+        )
+        if getattr(llm, "topics", None) is not None:
+            llm.topics.on_decision = tracker.record_topic  # shown on the portal's call page
+        if exporter is not None and llm is not None and hasattr(llm, "on_request"):
+            # full LLM input/output per call, for debugging in Langfuse
+            tracker.log_llm_requests()
+            llm.on_request = tracker.on_llm_request
+            if getattr(llm, "topics", None) is not None:
+                llm.topics.on_call = tracker.record_llm_call
         recorder.start()
         if exporter is not None:
             exporter.start()
@@ -201,7 +206,9 @@ def _debug_snapshot(
             else settings.llm_temperature,
             "greeting": config.greeting or settings.agent_greeting,
             "custom_system_prompt": bool(config.system_prompt),
-            "custom_knowledge_rules": bool(config.knowledge_prompt),
+            "custom_router_prompt": bool(config.router_prompt),
+            "custom_answer_prompt": bool(config.answer_prompt),
+            "custom_topic_prompt": bool(config.topic_prompt),
             "custom_rewrite_prompt": bool(config.rewrite_prompt),
             "idle_prompt_secs": config.idle_prompt_secs
             if config.idle_prompt_secs is not None
@@ -225,7 +232,6 @@ def _debug_snapshot(
             "query_rewrite": settings.knowledge_query_rewrite,
             "top_k": settings.knowledge_top_k,
             "min_score": settings.knowledge_min_score,
-            "keep_best": settings.knowledge_keep_best,
             "collection": settings.qdrant_collection,
             "whole_document": settings.knowledge_whole_document,
         },

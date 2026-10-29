@@ -166,24 +166,38 @@ def test_idle_overrides_from_portal_config(settings):
     assert off.user_aggregator._params.user_idle_timeout == 0
 
 
-def test_knowledge_prompt_override_is_appended(make_settings):
+def test_each_llm_step_gets_its_own_prompt(make_settings):
     from unittest.mock import Mock
 
     from pipecat.services.llm_service import LLMService
 
-    from voice_agent.knowledge.tool import PROMPT_ADDITION, KnowledgeTool
+    from voice_agent.knowledge.tool import ANSWER_PROMPT, ROUTER_PROMPT, KnowledgeTool
 
     tool = KnowledgeTool(service=Mock())
     default = build_voice_pipeline(_offline_transport(), make_settings(), knowledge=tool)
     llm = next(p for p in default.pipeline.processors if isinstance(p, LLMService))
-    assert PROMPT_ADDITION.strip() in llm.settings.system_instruction
+    # LLM 1 (deciding/search) rules in the service prompt, LLM 2 (answering) rules on the side
+    assert ROUTER_PROMPT.strip() in llm.settings.system_instruction
+    assert ANSWER_PROMPT.strip() not in llm.settings.system_instruction
+    assert ANSWER_PROMPT.strip() in llm.answer_instruction
+    assert ROUTER_PROMPT.strip() not in llm.answer_instruction
+    # both share the persona text
+    persona = llm.settings.system_instruction.split(ROUTER_PROMPT.strip())[0]
+    assert llm.answer_instruction.startswith(persona.rstrip("\n").rstrip())
 
-    custom = build_voice_pipeline(
+    overridden = build_voice_pipeline(
         _offline_transport(),
         make_settings(),
         knowledge=tool,
-        knowledge_prompt="Always search first.",
+        router_prompt="Always search first.",
+        answer_prompt="Answer only from sheets.",
     )
-    llm = next(p for p in custom.pipeline.processors if isinstance(p, LLMService))
-    assert llm.settings.system_instruction.rstrip().endswith("Always search first.")
-    assert PROMPT_ADDITION.strip() not in llm.settings.system_instruction
+    llm = next(p for p in overridden.pipeline.processors if isinstance(p, LLMService))
+    assert "Always search first." in llm.settings.system_instruction
+    assert ROUTER_PROMPT.strip() not in llm.settings.system_instruction
+    assert "Answer only from sheets." in llm.answer_instruction
+
+    without = build_voice_pipeline(_offline_transport(), make_settings())
+    llm = next(p for p in without.pipeline.processors if isinstance(p, LLMService))
+    assert ROUTER_PROMPT.strip() not in llm.settings.system_instruction
+    assert llm.answer_instruction is None

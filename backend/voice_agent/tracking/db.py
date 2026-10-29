@@ -19,6 +19,9 @@ alter table agent_config add column if not exists idle_prompt_secs double precis
 alter table agent_config add column if not exists idle_check_line text;
 alter table agent_config add column if not exists idle_goodbye_line text;
 alter table agent_config add column if not exists knowledge_prompt text;
+alter table agent_config add column if not exists router_prompt text;
+alter table agent_config add column if not exists answer_prompt text;
+alter table agent_config add column if not exists topic_prompt text;
 alter table agent_config add column if not exists rewrite_prompt text;
 alter table agent_config add column if not exists pronunciations jsonb;
 alter table agent_config add column if not exists tts_dict_id text;
@@ -67,6 +70,7 @@ create table if not exists turns (
 );
 alter table turns add column if not exists contributions jsonb;
 alter table turns add column if not exists searches jsonb;
+alter table turns add column if not exists topic jsonb;
 alter table turns add column if not exists prompt_tokens integer;
 alter table turns add column if not exists completion_tokens integer;
 alter table turns add column if not exists tts_characters integer;

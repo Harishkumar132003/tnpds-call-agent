@@ -91,7 +91,8 @@ export function PronunciationPage() {
         idle_prompt_secs: config.idle_prompt_secs,
         idle_check_line: config.idle_check_line,
         idle_goodbye_line: config.idle_goodbye_line,
-        knowledge_prompt: config.knowledge_prompt,
+        router_prompt: config.router_prompt,
+        answer_prompt: config.answer_prompt,
         pronunciations: lines,
         // models are managed on the Models page; keep the active version's choices
         stt_model: config.stt_model,

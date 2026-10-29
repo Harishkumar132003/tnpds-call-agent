@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { api } from './api';
+import { ChatPage } from './chat/ChatPage';
 import { Sidebar } from './components/Sidebar';
 import { ToastProvider } from './components/Toast';
 import { CallPage } from './pages/CallPage';
@@ -50,6 +51,7 @@ function Shell() {
       <div className="content">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/chat" element={<ChatPage />} />
           <Route path="/calls" element={<CallsPage />} />
           <Route path="/calls/:callId" element={<CallPage />} />
           <Route path="/config" element={<ConfigPage />} />

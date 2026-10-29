@@ -35,12 +35,19 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.transports.base_transport import BaseTransport
 
 from voice_agent.config import Settings
-from voice_agent.knowledge.tool import PROMPT_ADDITION, TOOL_NAME, KnowledgeTool, searching_line
+from voice_agent.knowledge.tool import (
+    ANSWER_PROMPT,
+    ROUTER_PROMPT,
+    TOOL_NAME,
+    KnowledgeTool,
+    searching_line,
+)
 from voice_agent.languages import get_language
 from voice_agent.phrases import idle_check_line as default_idle_check_line
 from voice_agent.phrases import idle_goodbye_line as default_idle_goodbye_line
 from voice_agent.prompts import build_system_prompt
 from voice_agent.services import build_llm, build_stt, build_tts
+from voice_agent.topics import TopicTracker
 from voice_agent.transports import WEB_AUDIO_RATES, AudioRates
 
 
@@ -70,7 +77,9 @@ def build_voice_pipeline(
     idle_prompt_secs: float | None = None,
     idle_check_line: str | None = None,
     idle_goodbye_line: str | None = None,
-    knowledge_prompt: str | None = None,
+    router_prompt: str | None = None,
+    answer_prompt: str | None = None,
+    topic_prompt: str | None = None,
     tts_dict_id: str | None = None,
 ) -> VoicePipeline:
     """Wire the Sarvam STT/TTS services, the LLM and the transport into a worker.
@@ -90,11 +99,28 @@ def build_voice_pipeline(
         )
         + _current_time_note()
     )
+    base_prompt = system_prompt
     if knowledge is not None:
-        system_prompt += "\n\n" + (knowledge_prompt or PROMPT_ADDITION).strip() + "\n"
+        # Each LLM step gets rules for its own job: deciding (and searching) vs
+        # writing the grounded answer from the results. Same persona, same model.
+        system_prompt = base_prompt + "\n\n" + (router_prompt or ROUTER_PROMPT).strip() + "\n"
     stt = build_stt(settings)
     tts = build_tts(settings, sample_rate=audio_rates.output_hz, dict_id=tts_dict_id)
     llm = build_llm(settings, system_prompt, temperature=temperature)
+    if knowledge is not None and hasattr(llm, "answer_instruction"):
+        llm.answer_instruction = (
+            base_prompt + "\n\n" + (answer_prompt or ANSWER_PROMPT).strip() + "\n"
+        )
+    if settings.llm_topic_context and hasattr(llm, "topics"):
+        topics = TopicTracker(
+            settings.sarvam_api_key.get_secret_value(),
+            model=settings.llm_model,
+            timeout=settings.topic_check_timeout_secs,
+            prompt=topic_prompt,
+        )
+        llm.topics = topics  # type: ignore[attr-defined]
+        if knowledge is not None:
+            knowledge.topics = topics  # the query rewrite sees the current topic only
 
     context = LLMContext(tools=knowledge.schema()) if knowledge is not None else LLMContext()
     if knowledge is not None:
@@ -169,6 +195,8 @@ def build_voice_pipeline(
 def _register_knowledge_tool(llm: object, tts: object, tool: KnowledgeTool, language: str) -> None:
     """Expose the search function to the LLM and speak a filler line while it runs."""
     llm.register_function(TOOL_NAME, tool.handle)  # type: ignore[attr-defined]
+    if hasattr(llm, "hold_text_before_tools"):
+        llm.hold_text_before_tools = True  # only the reply after the search answers
 
     @llm.event_handler("on_function_calls_started")  # type: ignore[attr-defined]
     async def on_function_calls_started(_service: object, function_calls: list) -> None:

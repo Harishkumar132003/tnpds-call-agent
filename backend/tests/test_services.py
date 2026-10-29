@@ -121,3 +121,92 @@ def test_validate_service_configuration_reports_bad_model(make_settings):
 def test_validate_service_configuration_reports_bad_prompt_placeholder(make_settings):
     with pytest.raises(ConfigurationError, match="AGENT_SYSTEM_PROMPT"):
         validate_service_configuration(make_settings(agent_system_prompt="Hello {who}"))
+
+
+class _Streamed:
+    """Stands in for Pipecat's streaming loop: pushes text, then maybe a tool call."""
+
+    def __init__(self, llm, monkeypatch, *, text, tool_call):
+        self.spoken, self.tools = [], []
+
+        async def fake_process(_self, context):
+            for piece in text:
+                await _self._push_llm_text(piece)
+            if tool_call:
+                await _self.run_function_calls(["search_knowledge_base"])
+
+        async def fake_push(_self, piece):
+            self.spoken.append(piece)
+
+        async def fake_run(_self, calls):
+            self.tools.extend(calls)
+
+        monkeypatch.setattr(SarvamLLMService, "_process_context", fake_process)
+        monkeypatch.setattr(SarvamLLMService, "_push_llm_text", fake_push)
+        monkeypatch.setattr(SarvamLLMService, "run_function_calls", fake_run)
+
+
+def _context(*messages):
+    from pipecat.processors.aggregators.llm_context import LLMContext
+
+    return LLMContext(messages=list(messages))
+
+
+async def test_llm1_text_is_dropped_when_it_calls_the_tool(settings, monkeypatch):
+    llm = build_llm(settings, "prompt")
+    llm.hold_text_before_tools = True
+    run = _Streamed(llm, monkeypatch, text=["ஓகே, ", "செக் பண்ணி சொல்றேன்."], tool_call=True)
+    await llm._process_context(_context({"role": "user", "content": "பையன் பேரை சேர்க்கணும்"}))
+    assert run.spoken == [] and run.tools == ["search_knowledge_base"]
+
+
+async def test_llm1_text_is_spoken_when_no_tool_is_called(settings, monkeypatch):
+    llm = build_llm(settings, "prompt")
+    llm.hold_text_before_tools = True
+    run = _Streamed(llm, monkeypatch, text=["சரி, ", "வேற ஏதாவது?"], tool_call=False)
+    await llm._process_context(_context({"role": "user", "content": "நன்றி"}))
+    assert run.spoken == ["சரி, வேற ஏதாவது?"]
+
+
+async def test_llm2_reply_after_the_tool_result_streams(settings, monkeypatch):
+    llm = build_llm(settings, "prompt")
+    llm.hold_text_before_tools = True
+    run = _Streamed(llm, monkeypatch, text=["ஆதார் ", "கார்டு வேணும்."], tool_call=False)
+    await llm._process_context(
+        _context(
+            {"role": "user", "content": "என்ன டாக்குமெண்ட்?"},
+            {"role": "tool", "tool_call_id": "1", "content": "{}"},
+        )
+    )
+    assert run.spoken == ["ஆதார் ", "கார்டு வேணும்."]  # piece by piece, not held
+
+
+async def test_text_is_not_held_without_tools(settings, monkeypatch):
+    llm = build_llm(settings, "prompt")  # hold_text_before_tools stays off
+    run = _Streamed(llm, monkeypatch, text=["வணக்கம், ", "சொல்லுங்க."], tool_call=False)
+    await llm._process_context(_context({"role": "user", "content": "ஹலோ"}))
+    assert run.spoken == ["வணக்கம், ", "சொல்லுங்க."]
+
+
+async def test_answer_prompt_is_used_after_a_tool_result(settings):
+    """LLM 1 request keeps the deciding prompt; LLM 2 (after the tool result) gets the
+    answering prompt; the topic note still lands on whichever prompt is active."""
+    llm = build_llm(settings, "decide prompt")
+    llm.answer_instruction = "answer prompt"
+    convo = [{"role": "user", "content": "கேள்வி"}]
+
+    def params_for(messages):
+        return llm.build_chat_completion_params(
+            {"messages": [{"role": "system", "content": "decide prompt"}, *messages]}
+        )
+
+    assert params_for(convo)["messages"][0]["content"] == "decide prompt"
+    after_tool = params_for(
+        [
+            *convo,
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "tool_call_id": "1", "content": "{}"},
+        ]
+    )
+    assert after_tool["messages"][0]["content"] == "answer prompt"
+    assert after_tool["messages"][-1]["role"] == "tool"  # the rest is untouched

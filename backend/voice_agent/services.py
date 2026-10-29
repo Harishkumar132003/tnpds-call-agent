@@ -176,9 +176,67 @@ class SarvamCatalogueLLMService(SarvamLLMService):
 
     on_request = None
     """Optional ``callable(params)`` given each exact chat request (Langfuse LLM logging)."""
+    topics = None
+    """Optional :class:`voice_agent.topics.TopicTracker` (LLM_TOPIC_CONTEXT)."""
+    answer_instruction = None
+    """System prompt for the answering step. A request whose last message is a tool result
+    is writing the caller's answer from search results (LLM 2): it gets this prompt instead
+    of the deciding/search prompt the service was built with (LLM 1)."""
+    hold_text_before_tools = False
+    """True when tools are registered: a reply to the caller (LLM 1) only decides whether to
+    call a tool. Its text is held until the reply ends and dropped when it calls a tool, so
+    the answer always comes from the reply after the tool result (LLM 2)."""
+    _held: list[str] | None = None
+
+    async def _process_context(self, context):
+        messages = context.messages
+        last = messages[-1] if messages else None
+        after_tool = isinstance(last, dict) and last.get("role") == "tool"
+        self._held = [] if self.hold_text_before_tools and not after_tool else None
+        try:
+            await super()._process_context(context)
+        finally:
+            held, self._held = self._held, None
+        if held:  # no tool call: the reply is the answer, speak it now
+            await super()._push_llm_text("".join(held))
+
+    async def _push_llm_text(self, text: str):
+        if self._held is not None:
+            self._held.append(text)
+            return
+        await super()._push_llm_text(text)
+
+    async def run_function_calls(self, function_calls):
+        if function_calls and self._held is not None:
+            if "".join(self._held).strip():
+                logger.info(f"LLM 1 text dropped (tool call follows): {''.join(self._held)!r}")
+            self._held = None
+        await super().run_function_calls(function_calls)
+
+    async def get_chat_completions(self, context):
+        if self.topics is not None:
+            try:
+                await self.topics.update(list(context.messages))
+            except Exception as exc:  # a failed check keeps the context as it is
+                logger.warning(f"[TOPIC] check failed, context kept: {exc}")
+        return await super().get_chat_completions(context)
 
     def build_chat_completion_params(self, params_from_context):
         params = super().build_chat_completion_params(params_from_context)
+        messages = params.get("messages")
+        if (
+            self.answer_instruction
+            and isinstance(messages, list)
+            and messages
+            and isinstance(messages[-1], dict)
+            and messages[-1].get("role") == "tool"
+            and messages[0].get("role") == "system"
+        ):
+            params["messages"] = [{**messages[0], "content": self.answer_instruction}] + messages[
+                1:
+            ]
+        if self.topics is not None and isinstance(params.get("messages"), list):
+            params["messages"] = self.topics.apply(params["messages"])
         if self.on_request is not None:
             try:
                 self.on_request(params)

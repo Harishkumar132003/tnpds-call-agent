@@ -42,11 +42,14 @@ SEARCHING_LINES = {
     "te-IN": "ఒక్క నిమిషం, నేను చూస్తాను.",
 }
 
-PROMPT_ADDITION = """\
+ROUTER_PROMPT = """\
 
-Knowledge base:
+Knowledge search (in this step you decide, you do not answer factual questions):
 - You have a tool called search_knowledge_base. Call it for any question about procedures, \
-required documents, eligibility, fees, timelines, status checks or complaints, before answering.
+required documents, eligibility, fees, prices, quantities, timelines, status checks or \
+complaints, before answering. \
+When you call it, write no text in that reply: the caller already hears a short waiting \
+line, and the answer is written in the next step, from the search results.
 - Put each separate topic the caller raised in this turn as one item in "questions", copied \
 in the caller's own words and language, never in English unless the caller spoke English. Do \
 not translate, shorten or reinterpret. Keep a complaint and its details together as one item; \
@@ -54,22 +57,50 @@ split only genuinely different questions (for example steps and documents). Each
 make sense on its own: when a question leans on an earlier one ("and what documents?"), add the \
 missing subject from the conversation, in the caller's language ("புது ஸ்மார்ட் கார்டுக்கு \
 என்னென்ன டாக்குமெண்ட்லாம் தேவை?").
-- Answer every question the caller asked, only from what the tool returns, in the caller's \
-language: one to three short spoken sentences per question, the key steps only, then offer \
-more detail. Do not read out URLs character by character; say the site name instead.
+- A follow-up that asks for a new fact (documents, fee, price, quantity, timeline, online or \
+offline) needs a fresh search, even when it is about the same topic.
+- Answer directly, without the tool, only when no fact is needed: greetings, thanks, \
+confirmations, asking the caller for a missing detail (their card type, a number), or asking \
+them to repeat something. Never answer a factual question from your own knowledge.
 - Speech recognition sometimes mishears words. If a word does not make sense for a ration \
 card helpline (for example "ஓட்டோ", "மோடரேஷன் கார்டு"), do not guess what it means and do \
 not answer about it: ask the caller to say it again in other words.
-- If the tool returns nothing relevant, first ask the caller to say the question again in \
-other words. Only if it is still not found, say you do not have that information and suggest \
-calling the helpline.
+"""
+
+ANSWER_PROMPT = """\
+
+Answering from search results (the conversation ends with search_knowledge_base results; \
+write the caller's answer from them):
+- Answer only with facts written in the returned sheets, in the caller's language: one to \
+three short spoken sentences per question, then offer more detail. Never add a document, \
+office, website, fee, step, amount or any other detail from your own knowledge, even when \
+you are sure it is true: if the sheets do not say it, you do not say it. Do not read out \
+URLs character by character; say the site name instead.
+- Keep every condition attached to a fact exactly as the sheet states it: full amounts \
+("50 rupees plus service charges", never just "50 rupees"), areas ("for Chennai residents"), \
+card types, commodity limits, "working days". When the answer depends on the caller's card \
+type and you do not know it, ask their card type before answering.
+- Say "only online", "only in person", "not possible", a yes or no about availability, or a \
+list of required documents only when a returned sheet states it.
+- If the results say nothing relevant was found for a question, say you do not have that \
+information and offer to forward the call to a human agent. Never answer it from your own \
+knowledge instead.
 """
 
 
+_last_searching_line: dict[str, str] = {}
+
+
 def searching_line(language_code: str) -> str:
-    """A filler line for the language; picked at random when there are several."""
+    """A filler line for the language, picked at random — but never the same line twice
+    in a row, so back-to-back searches do not sound repetitive."""
     lines = SEARCHING_LINES.get(language_code, SEARCHING_LINES["en-IN"])
-    return random.choice(lines) if isinstance(lines, tuple) else lines
+    if not isinstance(lines, tuple):
+        return lines
+    fresh = [line for line in lines if line != _last_searching_line.get(language_code)]
+    choice = random.choice(fresh)
+    _last_searching_line[language_code] = choice
+    return choice
 
 
 @dataclass(frozen=True)
@@ -91,7 +122,7 @@ class SearchRecord:
     rewrite_input: tuple = ()
     started_at: str | None = None
     settings: dict[str, Any] = field(default_factory=dict)
-    """The selection rules used (limit, min_score, keep_best), for debugging."""
+    """The selection rules used (limit, min_score), for debugging."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -122,20 +153,18 @@ class KnowledgeTool:
     service: KnowledgeService
     limit: int = 5
     """Most sheets fetched (and sent) per question."""
-    min_score: float = 0.50
-    """Send every fetched sheet at or above this similarity."""
-    keep_best: bool = True
-    """If none reaches ``min_score``, send the single best one when it is above MIN_SCORE."""
+    min_score: float = 0.40
+    """Send every fetched sheet at or above this similarity; below it nothing is sent."""
     rewrite_prompt: str | None = None
     """KNOWLEDGE_QUERY_REWRITE: the rewrite prompt saved in the portal (None = built-in)."""
+    topics: Any = None
+    """LLM_TOPIC_CONTEXT: limits the rewrite's caller messages to the current topic."""
     listeners: list[SearchListener] = field(default_factory=list)
 
     def _selected(self, hits: list[Any]) -> list[Any]:
-        """The hits to send: all at or above ``min_score``, else the best above the floor."""
-        chosen = [h for h in hits if h.score >= max(self.min_score, MIN_SCORE)]
-        if not chosen and self.keep_best and hits and hits[0].score >= MIN_SCORE:
-            chosen = [hits[0]]
-        return chosen
+        """The hits to send: only those at or above ``min_score``. A near-miss sheet is never
+        sent: answering from the closest wrong sheet is how the agent hallucinated."""
+        return [h for h in hits if h.score >= max(self.min_score, MIN_SCORE)]
 
     def on_search(self, listener: SearchListener) -> None:
         """Register a callback that receives every :class:`SearchRecord`."""
@@ -259,7 +288,6 @@ class KnowledgeTool:
                 settings={
                     "limit": self.limit,
                     "min_score": self.min_score,
-                    "keep_best": self.keep_best,
                     "floor": MIN_SCORE,
                 },
             )
@@ -271,7 +299,10 @@ class KnowledgeTool:
         questions). None when the rewrite fails, so the questions are translated instead."""
         context = getattr(params, "context", None)
         messages = getattr(context, "messages", None) if context is not None else None
-        caller = history_from_messages(messages if isinstance(messages, list) else [])
+        messages = list(messages) if isinstance(messages, list) else []
+        if self.topics is not None:
+            messages = self.topics.apply(messages)
+        caller = history_from_messages(messages)
         try:
             result = await self.service.search_rewritten(
                 caller, prompt=self.rewrite_prompt, limit=self.limit

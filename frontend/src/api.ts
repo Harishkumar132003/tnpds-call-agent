@@ -54,11 +54,11 @@ export const api = {
   configHistory: () => get<ConfigVersion[]>('/api/config/history'),
   models: (language: string) => get<ModelCatalogue>(`/api/models?language=${encodeURIComponent(language)}`),
   // POST: the draft prompt goes in the body, not the URL (a long Tamil prompt hit 414)
-  previewPrompt: (language: string, systemPrompt: string | null, knowledgePrompt?: string | null) =>
-    send<{ language: string; prompt: string }>('/api/config/preview', {
+  previewPrompt: (language: string, systemPrompt: string | null, routerPrompt?: string | null, answerPrompt?: string | null) =>
+    send<{ language: string; prompt: string; answer_prompt: string | null }>('/api/config/preview', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ language, system_prompt: systemPrompt || null, knowledge_prompt: knowledgePrompt || null }),
+      body: JSON.stringify({ language, system_prompt: systemPrompt || null, router_prompt: routerPrompt || null, answer_prompt: answerPrompt || null }),
     }),
   saveConfig: async (body: {
     system_prompt: string | null;
@@ -68,7 +68,10 @@ export const api = {
     idle_prompt_secs: number | null;
     idle_check_line: string | null;
     idle_goodbye_line: string | null;
-    knowledge_prompt: string | null;
+    router_prompt: string | null;
+    answer_prompt: string | null;
+    /** null keeps the saved topic prompt; "" resets it to the built-in text */
+    topic_prompt?: string | null;
     /** null keeps the saved rewrite prompt; "" resets it to the built-in text */
     rewrite_prompt?: string | null;
     pronunciations?: string | null;

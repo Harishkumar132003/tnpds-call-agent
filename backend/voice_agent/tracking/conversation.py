@@ -102,6 +102,15 @@ class ConversationTracker:
         """Keep every LLM request and reply on the turn, for Langfuse (no size limit)."""
         self._log_llm = True
 
+    def record_topic(self, decision: dict) -> None:
+        """Keep the topic classifier's decision for the caller's current turn."""
+        self._turn.topic = {k: decision.get(k) for k in ("decision", "reason", "text")}
+
+    def record_llm_call(self, call: dict) -> None:
+        """Add a complete side LLM call (e.g. the topic check) to the current turn."""
+        if self._log_llm:
+            self._turn.llm_calls.append(call)
+
     def on_llm_request(self, params: dict) -> None:
         """Called with each exact chat request the LLM service sends."""
         if not self._log_llm:

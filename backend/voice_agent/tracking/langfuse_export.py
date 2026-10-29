@@ -44,6 +44,23 @@ def _parse_time(value: object):
         return None
 
 
+def _llm_call_role(call: dict) -> str:
+    """The step a recorded LLM request belongs to, for its generation name.
+
+    A side call (the topic check) carries its own label. A main call is "llm answer"
+    when its context ends with a tool result (the same test the pipeline uses to swap
+    in the answer prompt), otherwise "llm decide".
+    """
+    label = call.get("label")
+    if label:
+        return str(label)
+    messages = call.get("input")
+    last = messages[-1] if isinstance(messages, list) and messages else None
+    if isinstance(last, dict) and last.get("role") == "tool":
+        return "llm answer"
+    return "llm decide"
+
+
 class LangfuseExporter:
     """One trace per call; a generation per model call inside each turn."""
 
@@ -148,6 +165,7 @@ class LangfuseExporter:
             "tts_ttfb_ms": turn.tts_ttfb_ms,
             "interrupted": turn.interrupted,
             "contributions": turn.contributions,
+            "topic": turn.topic,
         }
         span = self._trace.span(
             name=name,
@@ -259,7 +277,10 @@ class LangfuseExporter:
                 "total": (turn.prompt_tokens or 0) + (turn.completion_tokens or 0),
                 "unit": "TOKENS",
             }
-        # Full request/response of every LLM call (system prompt, all messages, tools)
+        # Full request/response of every LLM call (system prompt, all messages, tools).
+        # Main calls are named by their step: "llm decide" (LLM 1, may call the search
+        # tool) or "llm answer" (LLM 2, runs on a context ending with search results).
+        roles = [_llm_call_role(call) for call in turn.llm_calls]
         for n, call in enumerate(turn.llm_calls, start=1):
             calls_usage = call.get("usage") or {}
             output = call.get("output") or None
@@ -272,8 +293,11 @@ class LangfuseExporter:
                 if not call.get("output") and not calls_usage
                 else ""
             )
+            role = roles[n - 1]
+            if roles.count(role) > 1:
+                role = f"{role} {roles[:n].count(role)}"
             span.generation(
-                name=f"{name} llm {n}{label}",
+                name=f"{name} {role}{label}",
                 model=call.get("model") or s.llm_model,
                 start_time=_parse_time(call.get("started_at")) or start,
                 end_time=_parse_time(call.get("ended_at")) or end,

@@ -529,7 +529,7 @@ async def test_full_llm_input_and_output_reach_langfuse_per_call(make_settings):
     )
     await exporter.close("completed")
     gens = [kw for k, kw in fake.calls if k == "generation" and " llm " in kw["name"]]
-    assert [g["name"] for g in gens] == ["turn 0 llm 1 (tool call)", "turn 0 llm 2"]
+    assert [g["name"] for g in gens] == ["turn 0 llm decide (tool call)", "turn 0 llm answer"]
     assert gens[0]["input"][0] == system  # whole system prompt, untrimmed
     assert gens[0]["output"]["tool_calls"][0]["arguments"] == {"questions": ["q"]}
     assert gens[0]["model_parameters"] == {"model": "sarvam-105b", "temperature": 0.3}

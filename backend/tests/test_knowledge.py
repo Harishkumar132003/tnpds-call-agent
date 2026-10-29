@@ -399,12 +399,10 @@ def test_selection_sends_everything_above_the_threshold_capped_with_a_fallback()
 
     tool = KnowledgeTool(service=None, min_score=0.50)  # type: ignore[arg-type]
     assert [h.score for h in tool._selected(hits(0.69, 0.62, 0.55, 0.49))] == [0.69, 0.62, 0.55]
-    # nothing reaches 50%: the best one is still sent ...
-    assert [h.score for h in tool._selected(hits(0.48, 0.45))] == [0.48]
-    # ... unless it is below the 25% floor, or the fallback is off
+    # nothing reaches 50%: nothing is sent, the agent says it has no information.
+    # A near-miss sheet is never sent as a fallback (that caused wrong-sheet answers).
+    assert tool._selected(hits(0.48, 0.45)) == []
     assert tool._selected(hits(0.20)) == []
-    strict = KnowledgeTool(service=None, min_score=0.50, keep_best=False)  # type: ignore[arg-type]
-    assert strict._selected(hits(0.48, 0.45)) == []
 
 
 # ---------- query rewrite (KNOWLEDGE_QUERY_REWRITE) ----------
@@ -533,3 +531,12 @@ async def test_flag_off_keeps_todays_search():
     assert await service.search_rewritten(["x"]) is None
     result = await service.search("Is Aadhaar needed?", limit=2)
     assert result.rewritten_query is None and result.rewrite_ms == 0
+
+
+def test_searching_line_never_repeats_back_to_back():
+    from voice_agent.knowledge.tool import SEARCHING_LINES, searching_line
+
+    picks = [searching_line("ta-IN") for _ in range(60)]
+    assert set(picks) == set(SEARCHING_LINES["ta-IN"])  # every line still gets used
+    assert all(a != b for a, b in zip(picks, picks[1:], strict=False))  # but never twice in a row
+    assert searching_line("hi-IN") == SEARCHING_LINES["hi-IN"]  # single-line languages unchanged

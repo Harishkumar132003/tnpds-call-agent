@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from chat_agent.routes import create_chat_router
 from voice_agent import models as catalogue
 from voice_agent.config import Settings
 from voice_agent.knowledge.embeddings import OpenAIEmbedder
@@ -22,12 +23,13 @@ from voice_agent.knowledge.extract import SUPPORTED_EXTENSIONS, UnsupportedFileE
 from voice_agent.knowledge.rewrite import DEFAULT_REWRITE_PROMPT
 from voice_agent.knowledge.service import EmptyDocumentError, KnowledgeService
 from voice_agent.knowledge.store import KnowledgeStore
-from voice_agent.knowledge.tool import PROMPT_ADDITION
+from voice_agent.knowledge.tool import ANSWER_PROMPT, ROUTER_PROMPT
 from voice_agent.knowledge.translate import SarvamTranslator
 from voice_agent.languages import SUPPORTED_LANGUAGES, UnsupportedLanguageError, get_language
 from voice_agent.phrases import IDLE_CHECK_LINES, IDLE_GOODBYE_LINES
 from voice_agent.prompts import DEFAULT_PROMPT_TEMPLATE, build_system_prompt
 from voice_agent.pronunciation import SarvamDictionaries, entries_to_text, parse_entries
+from voice_agent.topics import CLASSIFIER_PROMPT
 from voice_agent.tracking.config_store import (
     AgentConfig,
     list_config_history,
@@ -56,7 +58,8 @@ TURNS_QUERY = """
 select turn_index, user_text, assistant_text, user_spoke_at, bot_spoke_at, completed_at,
        response_latency_ms, turn_release_ms, stt_ttfb_ms, llm_ttfb_ms, tts_ttfb_ms, interrupted,
        contributions::text as contributions, searches::text as searches,
-       prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds
+       prompt_tokens, completion_tokens, tts_characters, stt_audio_seconds,
+       topic::text as topic
 from turns where call_id = $1 order by turn_index
 """
 
@@ -100,7 +103,8 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 class PreviewIn(BaseModel):
     language: str
     system_prompt: str | None = None
-    knowledge_prompt: str | None = None
+    router_prompt: str | None = None
+    answer_prompt: str | None = None
 
 
 class SearchIn(BaseModel):
@@ -119,7 +123,9 @@ class ConfigIn(BaseModel):
     idle_prompt_secs: float | None = None
     idle_check_line: str | None = None
     idle_goodbye_line: str | None = None
-    knowledge_prompt: str | None = None
+    router_prompt: str | None = None
+    answer_prompt: str | None = None
+    topic_prompt: str | None = None
     rewrite_prompt: str | None = None
     """None keeps the active version's rewrite prompt; "" resets it to the built-in text."""
     pronunciations: str | None = None
@@ -222,7 +228,9 @@ def create_app(
             "idle_prompt_secs": config.idle_prompt_secs,
             "idle_check_line": config.idle_check_line,
             "idle_goodbye_line": config.idle_goodbye_line,
-            "knowledge_prompt": config.knowledge_prompt,
+            "router_prompt": config.router_prompt,
+            "answer_prompt": config.answer_prompt,
+            "topic_prompt": config.topic_prompt,
             "pronunciations": entries_to_text(config.pronunciations),
             "tts_dict_id": config.tts_dict_id,
             "stt_model": config.stt_model,
@@ -239,7 +247,10 @@ def create_app(
                 "translate": knowledge.translate_model if knowledge else "mayura:v1",
                 "embedding": knowledge.embedding_model if knowledge else "text-embedding-3-small",
             },
-            "knowledge_prompt_default": PROMPT_ADDITION.strip(),
+            "router_prompt_default": ROUTER_PROMPT.strip(),
+            "answer_prompt_default": ANSWER_PROMPT.strip(),
+            "topic_prompt_default": CLASSIFIER_PROMPT.strip(),
+            "topic_context_on": bool(knowledge and knowledge.llm_topic_context),
             "rewrite_prompt": config.rewrite_prompt,
             "rewrite_prompt_default": DEFAULT_REWRITE_PROMPT,
             "query_rewrite_on": bool(knowledge and knowledge.knowledge_query_rewrite),
@@ -272,19 +283,18 @@ def create_app(
 
         POST with a JSON body: a long prompt in the URL hits the proxies' URL limit (414).
         """
-        language, system_prompt, knowledge_prompt = (
-            body.language,
-            body.system_prompt,
-            body.knowledge_prompt,
-        )
         try:
-            lang = get_language(language)
-            text = build_system_prompt(agent_name, lang, override=system_prompt or None)
+            lang = get_language(body.language)
+            text = build_system_prompt(agent_name, lang, override=body.system_prompt or None)
         except (UnsupportedLanguageError, KeyError, IndexError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        answer_text = None
         if knowledge and knowledge.knowledge_enabled and knowledge.openai_api_key:
-            text += "\n\n" + (knowledge_prompt or PROMPT_ADDITION).strip() + "\n"
-        return {"language": lang.code, "prompt": text}
+            # The agent runs with two system prompts: LLM 1 decides (and searches),
+            # LLM 2 answers from the results. Both share the persona text.
+            answer_text = text + "\n\n" + (body.answer_prompt or ANSWER_PROMPT).strip() + "\n"
+            text += "\n\n" + (body.router_prompt or ROUTER_PROMPT).strip() + "\n"
+        return {"language": lang.code, "prompt": text, "answer_prompt": answer_text}
 
     @app.get("/api/config/history")
     async def api_config_history(request: Request):
@@ -367,7 +377,13 @@ def create_app(
             idle_prompt_secs=body.idle_prompt_secs,
             idle_check_line=(body.idle_check_line or "").strip() or None,
             idle_goodbye_line=(body.idle_goodbye_line or "").strip() or None,
-            knowledge_prompt=(body.knowledge_prompt or "").strip() or None,
+            router_prompt=(body.router_prompt or "").strip() or None,
+            answer_prompt=(body.answer_prompt or "").strip() or None,
+            topic_prompt=(
+                active.topic_prompt
+                if body.topic_prompt is None
+                else body.topic_prompt.strip() or None
+            ),
             rewrite_prompt=(
                 active.rewrite_prompt
                 if body.rewrite_prompt is None
@@ -539,6 +555,8 @@ def create_app(
             "rewrite_ms": result.rewrite_ms,
         }
 
+    # Text chat (its own package, no pipeline): same prompts and steps, typed instead of spoken
+    app.include_router(create_chat_router(knowledge))
     _mount_frontend(app)
     return app
 
@@ -641,6 +659,7 @@ def _turn_json(row: asyncpg.Record) -> dict:
     for key in ("contributions", "searches"):
         raw = turn.get(key)
         turn[key] = json.loads(raw) if raw else []
+    turn["topic"] = json.loads(turn["topic"]) if turn.get("topic") else None
     return turn
 
 
