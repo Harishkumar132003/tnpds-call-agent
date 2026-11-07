@@ -31,4 +31,5 @@ frontend/dist/
 *.mp3
 recordings/
 langfuse.env
+kb_docs/
 

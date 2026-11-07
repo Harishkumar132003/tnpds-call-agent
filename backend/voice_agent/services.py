@@ -256,9 +256,14 @@ def build_llm(
     """
     if temperature is None:
         temperature = settings.llm_temperature
+    stall = {
+        "retry_on_timeout": settings.llm_stall_retry_secs > 0,
+        "retry_timeout_secs": settings.llm_stall_retry_secs or None,
+    }
     if settings.llm_provider is LLMProvider.SARVAM:
         return SarvamCatalogueLLMService(
             api_key=settings.sarvam_api_key.get_secret_value(),
+            **stall,
             settings=SarvamLLMService.Settings(
                 model=settings.llm_model,
                 system_instruction=system_instruction,
@@ -275,6 +280,7 @@ def build_llm(
     return service_class(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
+        **stall,
         settings=OpenAILLMService.Settings(
             model=settings.llm_model,
             system_instruction=system_instruction,
@@ -320,8 +326,12 @@ def build_query_rewriter(settings: Settings):
     )
 
 
-def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
-    """Retrieval for the agent; ``None`` when disabled or the embedding key is missing."""
+def build_knowledge_service(
+    settings: Settings, *, search_type: str | None = None
+) -> KnowledgeService | None:
+    """Retrieval for the agent; ``None`` when disabled or the embedding key is missing.
+    ``search_type`` overrides KNOWLEDGE_SEARCH_TYPE (evaluation runs pick their own)."""
+    search_type = search_type or settings.knowledge_search_type
     if not settings.knowledge_enabled or settings.openai_api_key is None:
         return None
     from voice_agent.knowledge.embeddings import OpenAIEmbedder
@@ -354,4 +364,5 @@ def build_knowledge_service(settings: Settings) -> KnowledgeService | None:
         chunk_chars=settings.knowledge_chunk_chars,
         chunk_overlap=settings.knowledge_chunk_overlap,
         whole_document=settings.knowledge_whole_document,
+        search_type=search_type,  # type: ignore[arg-type]
     )

@@ -161,9 +161,18 @@ class KnowledgeTool:
     """LLM_TOPIC_CONTEXT: limits the rewrite's caller messages to the current topic."""
     listeners: list[SearchListener] = field(default_factory=list)
 
+    @property
+    def search_type(self) -> str:
+        return str(getattr(self.service, "search_type", "semantic"))
+
     def _selected(self, hits: list[Any]) -> list[Any]:
         """The hits to send: only those at or above ``min_score``. A near-miss sheet is never
-        sent: answering from the closest wrong sheet is how the agent hallucinated."""
+        sent: answering from the closest wrong sheet is how the agent hallucinated.
+
+        Keyword and hybrid search (evaluation only) score on other scales (BM25, RRF), so
+        there every retrieved sheet is sent, up to ``limit``."""
+        if self.search_type != "semantic":
+            return list(hits)
         return [h for h in hits if h.score >= max(self.min_score, MIN_SCORE)]
 
     def on_search(self, listener: SearchListener) -> None:
@@ -249,8 +258,8 @@ class KnowledgeTool:
         else:
             logger.info(f"Knowledge: {question!r} already in English, no translation needed")
         logger.info(
-            f"Knowledge: embedded in {result.embed_ms} ms, Qdrant search in {result.search_ms} ms, "
-            f"{len(result.hits)} chunk(s) returned"
+            f"Knowledge: embedded in {result.embed_ms} ms, Qdrant {self.search_type} search in "
+            f"{result.search_ms} ms, {len(result.hits)} chunk(s) returned"
         )
         selected = self._selected(result.hits)
         chosen_ids = {id(h) for h in selected}
@@ -289,6 +298,7 @@ class KnowledgeTool:
                     "limit": self.limit,
                     "min_score": self.min_score,
                     "floor": MIN_SCORE,
+                    "search_type": self.search_type,
                 },
             )
         )

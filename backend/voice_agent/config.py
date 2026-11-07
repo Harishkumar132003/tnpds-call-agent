@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     (context restarts there) or a FOLLOW-UP (context continues). Off = whole conversation."""
     topic_check_timeout_secs: float = Field(default=2.5, gt=0)
     llm_reasoning_effort: Literal["none", "low", "medium", "high"] | None = "none"
+    llm_stall_retry_secs: float = Field(default=5.0, ge=0)
+    """On a call, re-issue the answer request once when nothing has arrived after this many
+    seconds (the second attempt is not cut off). 0 turns it off. Rate limits (429), 5xx and
+    connection errors are retried twice by the HTTP client regardless."""
     """Sarvam's reasoning models think before answering, which adds 1-2 s to every reply.
     "none" turns that off (measured: first word in ~0.3 s instead of 1-2.4 s)."""
     openai_api_key: SecretStr | None = None
@@ -93,7 +97,7 @@ class Settings(BaseSettings):
     # Knowledge base (portal uploads). Embeddings use OPENAI_API_KEY.
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
-    qdrant_collection: str = "voice_agent_knowledge"
+    qdrant_collection: str = "voice_agent_knowledge_v2"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int | None = None
     embedding_base_url: str | None = None
@@ -107,6 +111,10 @@ class Settings(BaseSettings):
     """Send every sheet whose similarity reaches this score; below it nothing is sent."""
     knowledge_query_rewrite: bool = False
     """Rewrite each knowledge question + recent conversation into an English query first."""
+    knowledge_search_type: Literal["semantic", "keyword", "hybrid"] = "hybrid"
+    """How calls, test calls and the chat search the sheets: semantic (embeddings only),
+    keyword (BM25 only) or hybrid (both, merged by reciprocal rank fusion). Keyword and hybrid
+    send every retrieved sheet up to KNOWLEDGE_TOP_K; KNOWLEDGE_MIN_SCORE applies to semantic."""
     knowledge_rewrite_timeout_secs: float = Field(default=3.0, gt=0)
     knowledge_chunk_chars: int = Field(default=1200, gt=100)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)

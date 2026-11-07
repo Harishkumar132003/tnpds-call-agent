@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Literal
 
 import asyncpg
 from loguru import logger
@@ -16,6 +17,9 @@ from voice_agent.knowledge.extract import extract_text
 from voice_agent.knowledge.rewrite import QueryRewriter
 from voice_agent.knowledge.store import Hit, KnowledgeStore
 from voice_agent.knowledge.translate import Translator, needs_translation
+
+SearchType = Literal["semantic", "keyword", "hybrid"]
+SEARCH_TYPES: tuple[SearchType, ...] = ("semantic", "keyword", "hybrid")
 
 
 class EmptyDocumentError(ValueError):
@@ -52,6 +56,8 @@ class SearchResult:
     rewrite_tokens: tuple[int, int] = (0, 0)
     rewrite_input: tuple = ()
     """The rewrite's exact chat messages (for Langfuse only)."""
+    search_type: str = "semantic"
+    """How the hits were found: semantic (cosine), keyword (BM25) or hybrid (RRF)."""
 
 
 class KnowledgeService:
@@ -66,7 +72,12 @@ class KnowledgeService:
         chunk_overlap: int = 200,
         whole_document: bool = False,
         rewriter: QueryRewriter | None = None,
+        search_type: SearchType = "semantic",
     ) -> None:
+        if search_type not in SEARCH_TYPES:
+            raise ValueError(f"search_type must be one of {SEARCH_TYPES}, not {search_type!r}")
+        self.search_type: SearchType = search_type
+        """Evaluation runs pick keyword or hybrid; calls and the chat agent stay semantic."""
         self._rewriter = rewriter
         self._pool = pool
         self._store = store
@@ -87,6 +98,12 @@ class KnowledgeService:
     async def ping(self) -> bool:
         """True when Qdrant answers; used for start-up warnings."""
         return await self._store.ping()
+
+    async def collection_exists(self) -> bool:
+        return await self._store.exists()
+
+    async def close(self) -> None:
+        await self._store.close()
 
     async def ingest(self, filename: str, data: bytes, media_type: str | None) -> IngestResult:
         """Extract, chunk, embed and store one file; records progress in ``documents``."""
@@ -123,7 +140,9 @@ class KnowledgeService:
     async def search(
         self, question: str, *, limit: int = 5, document_id: str | None = None
     ) -> SearchResult:
-        """Embed the question, translated to English first when it is in an Indic script."""
+        """Search with the question, translated to English first when it is in an Indic
+        script. Semantic embeds it; keyword matches its words (BM25); hybrid does both and
+        merges the two rankings (RRF)."""
         translated: str | None = None
         translate_ms = 0
         if self._translator is not None and needs_translation(question):
@@ -131,13 +150,28 @@ class KnowledgeService:
             t = time.monotonic()
             translated = await self._translator.to_english(question)
             translate_ms = round((time.monotonic() - t) * 1000)
+        query = translated or question
         t0 = time.monotonic()
-        [vector] = await self._embedder.embed([translated or question])
-        t1 = time.monotonic()
-        hits = await self._store.search(vector, limit=limit, document_id=document_id)
+        if self.search_type == "keyword":
+            t1 = t0
+            hits = await self._store.search_keyword(query, limit=limit, document_id=document_id)
+        else:
+            [vector] = await self._embedder.embed([query])
+            t1 = time.monotonic()
+            if self.search_type == "hybrid":
+                hits = await self._store.search_hybrid(
+                    vector, query, limit=limit, document_id=document_id
+                )
+            else:
+                hits = await self._store.search(vector, limit=limit, document_id=document_id)
         t2 = time.monotonic()
         return SearchResult(
-            hits, round((t1 - t0) * 1000), round((t2 - t1) * 1000), translated, translate_ms
+            hits,
+            round((t1 - t0) * 1000),
+            round((t2 - t1) * 1000),
+            translated,
+            translate_ms,
+            search_type=self.search_type,
         )
 
     async def search_rewritten(
