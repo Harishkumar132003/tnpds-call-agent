@@ -89,6 +89,91 @@ create table if not exists documents (
     error           text,
     created_at      timestamptz not null default now()
 );
+
+-- Evaluation: test questions, each run (batch) and one result row per question per batch.
+create table if not exists eval_questions (
+    id              bigserial primary key,
+    question_en     text not null,
+    question_ta     text,
+    expected_source text not null,
+    note            text,
+    enabled         boolean not null default true,
+    origin          text not null default 'manual',
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+create table if not exists eval_batches (
+    id          uuid primary key,
+    started_at  timestamptz not null default now(),
+    finished_at timestamptz,
+    status      text not null,
+    total       integer not null default 0,
+    done        integer not null default 0,
+    config_id   integer,
+    collection  text,
+    note        text,
+    error       text
+);
+alter table eval_batches add column if not exists concurrency integer not null default 1;
+alter table eval_batches add column if not exists force_search boolean not null default false;
+alter table eval_batches add column if not exists search_type text not null default 'semantic';
+create table if not exists rewrite_eval_questions (
+    id                 bigserial primary key,
+    question_ta        text not null,
+    question_en        text,
+    expected_source    text not null,
+    source_question_id bigint,
+    created_at         timestamptz not null default now(),
+    updated_at         timestamptz not null default now()
+);
+create table if not exists rewrite_eval_runs (
+    id            uuid primary key,
+    started_at    timestamptz not null default now(),
+    finished_at   timestamptz,
+    status        text not null,
+    prompt        text not null,
+    prompt_source text not null default 'config',
+    config_id     integer,
+    model         text,
+    collection    text,
+    search_type   text not null default 'semantic',
+    total         integer not null default 0,
+    error         text
+);
+create table if not exists rewrite_eval_results (
+    id              bigserial primary key,
+    run_id          uuid not null references rewrite_eval_runs(id) on delete cascade,
+    question_id     bigint references rewrite_eval_questions(id) on delete set null,
+    question_ta     text not null,
+    expected_source text not null,
+    rewritten_query text,
+    hits            jsonb not null default '[]',
+    expected_rank   integer,
+    expected_sent   boolean not null default false,
+    rewrite_ms      integer,
+    ms              integer,
+    error           text,
+    at              timestamptz not null default now()
+);
+alter table rewrite_eval_results add column if not exists judged_ok boolean not null default false;
+create table if not exists eval_results (
+    id                bigserial primary key,
+    batch_id          uuid not null references eval_batches(id) on delete cascade,
+    question_id       bigint references eval_questions(id) on delete set null,
+    question_ta       text,
+    expected_source   text,
+    rewritten_query   text,
+    hits              jsonb,
+    expected_rank     integer,
+    expected_sent     boolean not null default false,
+    answer            text,
+    error             text,
+    prompt_tokens     integer,
+    completion_tokens integer,
+    ms                integer,
+    at                timestamptz not null default now(),
+    unique (batch_id, question_id)
+);
 """
 
 

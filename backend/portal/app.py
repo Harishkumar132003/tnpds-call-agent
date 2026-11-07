@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from chat_agent.routes import create_chat_router
+from portal.evals import create_evals_router
+from portal.rewrite_evals import create_rewrite_evals_router
 from voice_agent import models as catalogue
 from voice_agent.config import Settings
 from voice_agent.knowledge.embeddings import OpenAIEmbedder
@@ -171,9 +173,12 @@ def create_app(
             app.state.knowledge_store, app.state.knowledge = _build_knowledge(
                 app.state.pool, _with_embedding(knowledge, active.embedding_model)
             )
+        app.state.eval_runner = None  # set by the evaluation routes on first use
         try:
             yield
         finally:
+            if app.state.eval_runner is not None:
+                await app.state.eval_runner.shutdown()
             if app.state.knowledge_store is not None:
                 await app.state.knowledge_store.close()
             await app.state.pool.close()
@@ -557,6 +562,10 @@ def create_app(
 
     # Text chat (its own package, no pipeline): same prompts and steps, typed instead of spoken
     app.include_router(create_chat_router(knowledge))
+    # Evaluation: test questions run as fresh chats in the background, results per batch
+    app.include_router(create_evals_router(knowledge))
+    # Rewrite-prompt evaluation: a fixed question set rewritten with a draft prompt
+    app.include_router(create_rewrite_evals_router(knowledge))
     _mount_frontend(app)
     return app
 
@@ -650,6 +659,7 @@ def _build_knowledge(
         chunk_chars=settings.knowledge_chunk_chars,
         chunk_overlap=settings.knowledge_chunk_overlap,
         whole_document=settings.knowledge_whole_document,
+        search_type=settings.knowledge_search_type,  # the chat page searches as calls do
     )
     return store, service
 

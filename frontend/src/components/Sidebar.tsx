@@ -53,6 +53,18 @@ export function Sidebar({ liveCalls, backendUp, language }: Props) {
           <Icon name="file" className="nav__icon" />
           <span className="nav__label">Knowledge</span>
         </NavLink>
+        <NavLink to="/evals" className={navClass}>
+          <Icon name="check" className="nav__icon" />
+          <span className="nav__label">Evaluation</span>
+        </NavLink>
+        <NavLink to="/eval-results" className={navClass}>
+          <Icon name="table" className="nav__icon" />
+          <span className="nav__label">Eval results</span>
+        </NavLink>
+        <NavLink to="/rewrite-eval" className={navClass}>
+          <Icon name="refresh" className="nav__icon" />
+          <span className="nav__label">Rewrite prompt</span>
+        </NavLink>
         <NavLink to="/pronunciation" className={navClass}>
           <Icon name="sparkle" className="nav__icon" />
           <span className="nav__label">Pronunciation</span>

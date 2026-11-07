@@ -8,9 +8,13 @@ import { CallPage } from './pages/CallPage';
 import { CallsPage } from './pages/CallsPage';
 import { ConfigPage } from './pages/ConfigPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { EvalBatchPage } from './pages/EvalBatchPage';
+import { EvalResultsPage } from './pages/EvalResultsPage';
+import { EvalsPage } from './pages/EvalsPage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { ModelsPage } from './pages/ModelsPage';
 import { PronunciationPage } from './pages/PronunciationPage';
+import { RewriteEvalPage } from './pages/RewriteEvalPage';
 import { TestCallPage } from './pages/TestCallPage';
 import type { AgentConfig } from './types';
 
@@ -56,8 +60,12 @@ function Shell() {
           <Route path="/calls/:callId" element={<CallPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
+          <Route path="/evals" element={<EvalsPage />} />
+          <Route path="/eval-results" element={<EvalResultsPage />} />
+          <Route path="/eval-results/:batchId" element={<EvalBatchPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/pronunciation" element={<PronunciationPage />} />
+          <Route path="/rewrite-eval" element={<RewriteEvalPage />} />
           <Route path="/test-call" element={<TestCallPage />} />
         </Routes>
       </div>

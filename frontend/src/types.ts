@@ -234,3 +234,125 @@ export interface TestCallInfo {
   /** null when the bot is unreachable; false when BOT_TRANSPORT disables WebRTC */
   webrtc: boolean | null;
 }
+
+// ---- evaluation ----
+
+export interface EvalQuestion {
+  id: number;
+  question_en: string;
+  question_ta: string | null;
+  expected_source: string;
+  note: string | null;
+  enabled: boolean;
+  origin: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How an evaluation batch searched the knowledge base. */
+export type SearchType = 'semantic' | 'keyword' | 'hybrid';
+
+export const SEARCH_TYPE_LABEL: Record<SearchType, string> = {
+  semantic: 'semantic',
+  keyword: 'keyword (BM25)',
+  hybrid: 'hybrid (RRF)',
+};
+
+export interface EvalBatch {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  total: number;
+  done: number;
+  config_id: number | null;
+  collection: string | null;
+  note: string | null;
+  error: string | null;
+  concurrency: number;
+  force_search: boolean;
+  search_type: SearchType;
+  results: number;
+  retrieved: number;
+  sent: number;
+  rank1: number;
+  errors: number;
+  avg_ms: number;
+}
+
+/** Rewrite-prompt evaluation: a fixed question set rewritten with a draft prompt. */
+export interface RewriteQuestion {
+  id: number;
+  question_ta: string;
+  question_en: string | null;
+  expected_source: string;
+  source_question_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RewriteRun {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  prompt: string;
+  prompt_source: 'draft' | 'config' | 'default';
+  config_id: number | null;
+  model: string | null;
+  collection: string | null;
+  search_type: SearchType;
+  total: number;
+  error: string | null;
+  results: number;
+  retrieved: number;
+  sent: number;
+  rank1: number;
+  errors: number;
+  /** How many rewritten queries the reviewer ticked as correct. */
+  judged_ok: number;
+  avg_rewrite_ms: number;
+}
+
+export interface RewriteResult {
+  id: number;
+  run_id: string;
+  question_id: number | null;
+  question_ta: string;
+  expected_source: string;
+  rewritten_query: string | null;
+  hits: EvalHit[];
+  expected_rank: number | null;
+  expected_sent: boolean;
+  rewrite_ms: number | null;
+  ms: number | null;
+  error: string | null;
+  at: string;
+  judged_ok: boolean;
+}
+
+export interface EvalHit {
+  source: string | null;
+  document_id: string | null;
+  chunk_index: number | null;
+  score: number | null;
+  used: boolean;
+}
+
+export interface EvalResult {
+  id: number;
+  question_id: number | null;
+  question_ta: string | null;
+  question_en: string | null;
+  expected_source: string | null;
+  rewritten_query: string | null;
+  hits: EvalHit[] | null;
+  expected_rank: number | null;
+  expected_sent: boolean;
+  answer: string | null;
+  error: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  ms: number | null;
+  at: string;
+}
