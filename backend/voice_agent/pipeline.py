@@ -35,6 +35,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.transports.base_transport import BaseTransport
 
 from voice_agent.config import Settings
+from voice_agent.fillers import FillerClips, Voice, load_filler_clips
 from voice_agent.knowledge.tool import (
     ANSWER_PROMPT,
     ROUTER_PROMPT,
@@ -124,7 +125,18 @@ def build_voice_pipeline(
 
     context = LLMContext(tools=knowledge.schema()) if knowledge is not None else LLMContext()
     if knowledge is not None:
-        _register_knowledge_tool(llm, tts, knowledge, language.code)
+        clips = None
+        if settings.filler_clips:
+            voice = Voice(
+                model=settings.sarvam_tts_model,
+                speaker=settings.sarvam_tts_speaker,
+                pace=settings.sarvam_tts_pace,
+                dict_id=tts_dict_id,
+            )
+            clips = load_filler_clips(language.code, voice)
+        _register_knowledge_tool(
+            llm, tts, knowledge, language.code, clips=clips, sample_rate=audio_rates.output_hz
+        )
     aggregators = LLMContextAggregatorPair(
         context,
         # Local Silero VAD drives turn start (and barge-in interruptions); the
@@ -192,16 +204,36 @@ def build_voice_pipeline(
     )
 
 
-def _register_knowledge_tool(llm: object, tts: object, tool: KnowledgeTool, language: str) -> None:
-    """Expose the search function to the LLM and speak a filler line while it runs."""
+def _register_knowledge_tool(
+    llm: object,
+    tts: object,
+    tool: KnowledgeTool,
+    language: str,
+    *,
+    clips: FillerClips | None = None,
+    sample_rate: int = WEB_AUDIO_RATES.output_hz,
+) -> None:
+    """Expose the search function to the LLM and say a filler line while it runs.
+
+    The line is played from ``clips`` when it was recorded with the session's
+    voice, and synthesised otherwise. Either way it is queued through the TTS
+    service so it keeps its place in front of the answer's audio.
+    """
     llm.register_function(TOOL_NAME, tool.handle)  # type: ignore[attr-defined]
     if hasattr(llm, "hold_text_before_tools"):
         llm.hold_text_before_tools = True  # only the reply after the search answers
 
     @llm.event_handler("on_function_calls_started")  # type: ignore[attr-defined]
     async def on_function_calls_started(_service: object, function_calls: list) -> None:
-        if any(getattr(call, "function_name", "") == TOOL_NAME for call in function_calls):
-            filler = searching_line(language)  # a different line each search
+        if not any(getattr(call, "function_name", "") == TOOL_NAME for call in function_calls):
+            return
+        filler = searching_line(language)  # a different line each search
+        frames = await clips.frames(filler, sample_rate) if clips is not None else None
+        if frames:
+            logger.info(f"Searching knowledge base; playing the recorded line: {filler}")
+            for frame in frames:
+                await tts.queue_frame(frame)  # type: ignore[attr-defined]
+        else:
             logger.info(f"Searching knowledge base; telling the caller: {filler}")
             await tts.queue_frame(TTSSpeakFrame(filler, append_to_context=False))  # type: ignore[attr-defined]
 

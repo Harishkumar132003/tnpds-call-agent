@@ -201,3 +201,64 @@ def test_each_llm_step_gets_its_own_prompt(make_settings):
     llm = next(p for p in without.pipeline.processors if isinstance(p, LLMService))
     assert ROUTER_PROMPT.strip() not in llm.settings.system_instruction
     assert llm.answer_instruction is None
+
+
+class _FakeLLM:
+    def __init__(self):
+        self.handlers = {}
+
+    def register_function(self, name, handler):
+        pass
+
+    def event_handler(self, name):
+        def register(fn):
+            self.handlers[name] = fn
+            return fn
+
+        return register
+
+
+async def test_search_filler_plays_the_recorded_clip_or_falls_back_to_tts(tmp_path):
+    import json
+    import wave
+    from types import SimpleNamespace
+
+    from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
+
+    from voice_agent.fillers import FillerClips
+    from voice_agent.knowledge.tool import SEARCHING_LINES, TOOL_NAME, KnowledgeTool
+    from voice_agent.pipeline import _register_knowledge_tool
+
+    clips = []
+    for n, text in enumerate(SEARCHING_LINES["ta-IN"]):
+        with wave.open(str(tmp_path / f"{n}.wav"), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b"\x01\x00" * 24000)
+        clips.append({"file": f"{n}.wav", "text": text})
+    manifest = {"language": "ta-IN", "model": "m", "speaker": "s", "pace": 1.0, "clips": clips}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    recorded = FillerClips.load("ta-IN", tmp_path)
+    search = [SimpleNamespace(function_name=TOOL_NAME)]
+
+    llm, tts = _FakeLLM(), Mock(queue_frame=AsyncMock())
+    _register_knowledge_tool(
+        llm, tts, KnowledgeTool(service=Mock()), "ta-IN", clips=recorded, sample_rate=8000
+    )
+    await llm.handlers["on_function_calls_started"](llm, search)
+    frames = [call.args[0] for call in tts.queue_frame.await_args_list]
+    assert isinstance(frames[0], TTSStartedFrame) and isinstance(frames[-1], TTSStoppedFrame)
+    assert all(isinstance(f, TTSAudioRawFrame) and f.sample_rate == 8000 for f in frames[1:-1])
+    assert not any(isinstance(f, TTSSpeakFrame) for f in frames)
+
+    tts.queue_frame.reset_mock()
+    await llm.handlers["on_function_calls_started"](llm, [SimpleNamespace(function_name="other")])
+    tts.queue_frame.assert_not_awaited()  # only the search gets a filler
+
+    llm, tts = _FakeLLM(), Mock(queue_frame=AsyncMock())
+    _register_knowledge_tool(llm, tts, KnowledgeTool(service=Mock()), "ta-IN", clips=None)
+    await llm.handlers["on_function_calls_started"](llm, search)
+    (frame,), _ = tts.queue_frame.await_args
+    assert isinstance(frame, TTSSpeakFrame) and frame.append_to_context is False
+    assert frame.text in SEARCHING_LINES["ta-IN"]
