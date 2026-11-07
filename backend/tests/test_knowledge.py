@@ -540,3 +540,71 @@ def test_searching_line_never_repeats_back_to_back():
     assert set(picks) == set(SEARCHING_LINES["ta-IN"])  # every line still gets used
     assert all(a != b for a, b in zip(picks, picks[1:], strict=False))  # but never twice in a row
     assert searching_line("hi-IN") == SEARCHING_LINES["hi-IN"]  # single-line languages unchanged
+
+
+# ---------------------------------------------------------------------------
+# query rewrite: one more attempt while the time budget allows
+
+
+class _RewriteClient:
+    """Scripted ``httpx.AsyncClient``: each ``post`` pops the next outcome, an exception
+    to raise or a dict to return as the response body."""
+
+    outcomes: list = []
+    timeouts: list[float] = []
+
+    def __init__(self, *a, timeout=None, **k) -> None:
+        type(self).timeouts.append(timeout)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, *, headers=None, json=None):
+        outcome = type(self).outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        class R:
+            def raise_for_status(self) -> None: ...
+
+            def json(self) -> dict:
+                return outcome
+
+        return R()
+
+
+def _rewrite_body(text: str) -> dict:
+    return {"choices": [{"message": {"content": text}}], "usage": {}}
+
+
+async def test_a_quick_rewrite_failure_is_tried_once_more(monkeypatch):
+    import httpx
+
+    from voice_agent.knowledge import rewrite as mod
+
+    _RewriteClient.outcomes = [httpx.ConnectError("refused"), _rewrite_body("Is my card active?")]
+    _RewriteClient.timeouts = []
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _RewriteClient)
+    result = await mod.QueryRewriter("k", timeout=3.0).rewrite(["en card active-a?"])
+    assert result is not None and result.query == "Is my card active?"
+    assert len(_RewriteClient.timeouts) == 2
+    assert _RewriteClient.timeouts[0] == 3.0 and 0 < _RewriteClient.timeouts[1] <= 3.0
+
+
+async def test_a_rewrite_timeout_uses_the_whole_budget_so_it_is_not_retried(monkeypatch):
+    import asyncio
+
+    from voice_agent.knowledge import rewrite as mod
+
+    async def slow_post(self, url, *, headers=None, json=None):
+        await asyncio.sleep(1)
+
+    _RewriteClient.outcomes = []
+    _RewriteClient.timeouts = []
+    monkeypatch.setattr(_RewriteClient, "post", slow_post)
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _RewriteClient)
+    assert await mod.QueryRewriter("k", timeout=0.05).rewrite(["hello"]) is None
+    assert len(_RewriteClient.timeouts) == 1

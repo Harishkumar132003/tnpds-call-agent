@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,9 @@ import httpx
 from loguru import logger
 
 SARVAM_CHAT_URL = "https://api.sarvam.ai/v2/chat/completions"
+RETRY_MIN_SECS = 0.5
+"""A failed rewrite is tried once more only when at least this much of its budget is left,
+so a quick failure (connection refused, 429, 5xx) gets a second go and a timeout does not."""
 HISTORY_MESSAGES = 10
 
 DEFAULT_REWRITE_PROMPT = """\
@@ -89,6 +93,24 @@ class QueryRewriter:
         self.model = model
         self._timeout = timeout
 
+    async def _post(self, body: dict, timeout: float) -> dict | None:
+        """One chat-completion request; ``None`` (logged) on any failure."""
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await asyncio.wait_for(
+                    client.post(
+                        SARVAM_CHAT_URL,
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        json=body,
+                    ),
+                    timeout=timeout,
+                )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            logger.warning(f"Query rewrite request failed: {exc!r}")
+            return None
+
     async def rewrite(
         self, caller_messages: list[str], prompt: str | None = None
     ) -> Rewrite | None:
@@ -106,20 +128,15 @@ class QueryRewriter:
                 {"role": "user", "content": user},
             ],
         }
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await asyncio.wait_for(
-                    client.post(
-                        SARVAM_CHAT_URL,
-                        headers={"Authorization": f"Bearer {self._api_key}"},
-                        json=body,
-                    ),
-                    timeout=self._timeout,
-                )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:
-            logger.warning(f"Query rewrite failed, falling back to translation: {exc!r}")
+        deadline = time.monotonic() + self._timeout
+        data = await self._post(body, self._timeout)
+        if data is None:
+            remaining = deadline - time.monotonic()
+            if remaining >= RETRY_MIN_SECS:
+                logger.info(f"Query rewrite: trying once more with {remaining:.1f} s left")
+                data = await self._post(body, remaining)
+        if data is None:
+            logger.warning("Query rewrite failed, falling back to translation")
             return None
         query = _query(data["choices"][0]["message"].get("content") or "")
         if not query:

@@ -341,3 +341,118 @@ async def test_sessions_drop_the_least_recently_used_over_the_limit(settings):
     third = sessions.start(settings=settings, config=CONFIG, knowledge=None)
     assert sessions.get(first.id) is None  # the oldest made room
     assert sessions.get(second.id) is second and sessions.get(third.id) is third
+
+
+async def test_forced_search_skips_the_decide_step_and_searches_the_callers_words(
+    settings, monkeypatch
+):
+    # evaluation runs: no LLM 1, so a bare statement still yields retrieved sheets
+    sarvam = FakeSarvam({"text": "ஆன்லைன்ல அப்ளை பண்ணலாம்."})
+    sarvam.install(monkeypatch)
+    knowledge = FakeKnowledge(0.71, 0.55)
+    session = ChatSession(settings=settings, config=CONFIG, knowledge=knowledge, force_search=True)
+
+    turn = await session.say(QUESTION)
+
+    assert turn.reply == "ஆன்லைன்ல அப்ளை பண்ணலாம்."
+    assert [s["step"] for s in turn.steps] == ["llm decide", "search", "llm answer"]
+    assert turn.steps[0]["skipped"] == "forced search" and turn.steps[0]["ms"] == 0
+    assert knowledge.asked == [QUESTION]  # the caller's own words, untouched
+    assert turn.searched is True and len(turn.searches) == 1
+    (answer,) = sarvam.llm_bodies  # only LLM 2 ran, with the answer rules
+    assert "ANSWER RULES." in answer["messages"][0]["content"]
+    assert answer["messages"][-1]["role"] == "tool"
+    assert json.loads(answer["messages"][-1]["content"])["found"] is True
+    # the flag is ignored without a knowledge service: the plain decide step runs
+    plain = ChatSession(settings=settings, config=CONFIG, knowledge=None, force_search=True)
+    assert plain.force_search is False
+
+
+def test_the_chat_agent_never_forces_a_search(settings):
+    # only evaluation runs skip the decide step; the portal chat always lets LLM 1 decide
+    from chat_agent.session import ChatSessions
+
+    session = ChatSessions().start(settings=settings, config=CONFIG, knowledge=FakeKnowledge(0.9))
+    assert session.force_search is False
+    assert chat(settings, FakeKnowledge(0.9)).force_search is False
+
+
+def test_error_text_names_a_timeout_instead_of_an_empty_message():
+    import httpx
+
+    from chat_agent.session import error_text
+
+    assert error_text(httpx.ReadTimeout("")) == "timed out after 90 s"
+    assert error_text(RuntimeError("boom")) == "boom"
+    assert error_text(RuntimeError()) == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# LLM retries
+
+
+class FlakySarvam(FakeSarvam):
+    """A FakeSarvam whose first ``failures`` requests raise before answering."""
+
+    def __init__(self, *replies: dict, failures: list[Exception], **kw) -> None:
+        super().__init__(*replies, **kw)
+        self.failures = failures
+
+    def _answer(self, body: dict) -> dict:
+        if self.failures:
+            raise self.failures.pop(0)
+        return super()._answer(body)
+
+
+def _status_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.sarvam.ai/v2/chat/completions")
+    return httpx.HTTPStatusError(
+        f"{code}", request=request, response=httpx.Response(code, request=request)
+    )
+
+
+async def test_a_timed_out_or_rate_limited_llm_request_is_retried(settings, monkeypatch):
+    from chat_agent import session as mod
+
+    monkeypatch.setattr(mod, "LLM_RETRY_BACKOFF_SECS", (0.0, 0.0))
+    sarvam = FlakySarvam(
+        {"text": "Vanakkam"}, failures=[httpx.ReadTimeout("slow"), _status_error(429)]
+    )
+    sarvam.install(monkeypatch)
+    turn = await chat(settings).say("hi")
+    assert turn.error is None and turn.reply == "Vanakkam"
+    assert len(sarvam.bodies) == 3
+    assert [s for s in turn.steps if s["step"] == "llm decide"][0]["retries"] == 2
+
+
+async def test_a_bad_request_is_not_retried(settings, monkeypatch):
+    from chat_agent import session as mod
+
+    monkeypatch.setattr(mod, "LLM_RETRY_BACKOFF_SECS", (0.0, 0.0))
+    sarvam = FlakySarvam({"text": "never"}, failures=[_status_error(400)])
+    sarvam.install(monkeypatch)
+    turn = await chat(settings).say("hi")
+    assert turn.error is not None and "400" in turn.error
+    assert len(sarvam.bodies) == 1
+
+
+async def test_retries_stop_after_the_limit(settings, monkeypatch):
+    from chat_agent import session as mod
+
+    monkeypatch.setattr(mod, "LLM_RETRY_BACKOFF_SECS", (0.0, 0.0))
+    sarvam = FlakySarvam({"text": "never"}, failures=[httpx.ReadTimeout("x")] * 3)
+    sarvam.install(monkeypatch)
+    turn = await chat(settings).say("hi")
+    assert turn.error is not None and "timed out" in turn.error
+    assert len(sarvam.bodies) == 3
+
+
+def test_transient_failures_are_timeouts_connection_errors_429_and_5xx():
+    from chat_agent.session import transient_llm_failure
+
+    assert transient_llm_failure(httpx.ReadTimeout("x"))
+    assert transient_llm_failure(httpx.ConnectError("x"))
+    assert transient_llm_failure(_status_error(429))
+    assert transient_llm_failure(_status_error(503))
+    assert not transient_llm_failure(_status_error(400))
+    assert not transient_llm_failure(ValueError("x"))

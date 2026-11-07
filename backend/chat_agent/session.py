@@ -45,6 +45,7 @@ from voice_agent.knowledge.service import KnowledgeService
 from voice_agent.knowledge.tool import (
     ANSWER_PROMPT,
     ROUTER_PROMPT,
+    TOOL_NAME,
     KnowledgeTool,
     SearchRecord,
     searching_line,
@@ -57,6 +58,9 @@ from voice_agent.tracking.config_store import AgentConfig
 SARVAM_CHAT_URL = "https://api.sarvam.ai/v2/chat/completions"
 MAX_REPLY_TOKENS = 800
 REQUEST_TIMEOUT_SECS = 90.0
+LLM_RETRIES = 2
+"""Further attempts at a chat-completion request after a transient failure."""
+LLM_RETRY_BACKOFF_SECS = (1.0, 3.0)
 MAX_SEARCH_ROUNDS = 2
 """Searches allowed in one chat turn, as on a call: the first decide step and one follow-up."""
 
@@ -101,6 +105,7 @@ class _Reply:
     completion_tokens: int
     ms: int
     finish: str | None
+    retries: int = 0
 
 
 @dataclass
@@ -150,8 +155,15 @@ class ChatSession:
         settings: Settings,
         config: AgentConfig,
         knowledge: KnowledgeService | None = None,
+        force_search: bool = False,
+        llm_retries: int = LLM_RETRIES,
     ) -> None:
         self.id = str(uuid.uuid4())
+        self.force_search = force_search and knowledge is not None
+        """Evaluation runs: skip the first decide step and search the caller's words as said."""
+        self.llm_retries = max(0, llm_retries)
+        """Retries of a timed-out, rate-limited or failed LLM request (0 in evaluation
+        runs, which retry the whole question themselves)."""
         self.created_at = datetime.now(UTC)
         self.used_at = self.created_at
         self.config_id = config.id
@@ -262,6 +274,26 @@ class ChatSession:
         rounds = 0
         while True:
             after_tool = bool(self.messages) and self.messages[-1].get("role") == "tool"
+            if self.force_search and rounds == 0 and not after_tool:
+                # No LLM decide: the search runs on the caller's own words, so every
+                # evaluation question yields retrieved sheets instead of a counter-question.
+                call = _forced_search(text)
+                steps.append(
+                    {
+                        "step": "llm decide",
+                        "ms": 0,
+                        "skipped": "forced search",
+                        "searched": True,
+                        "questions": [call["arguments"]],
+                    }
+                )
+                filler = searching_line(self.language.code)
+                self.messages.append(
+                    {"role": "assistant", "content": None, "tool_calls": [call["raw"]]}
+                )
+                steps.append(await self._search(call))
+                rounds += 1
+                continue
             system = self.answer_prompt if after_tool else self.router_prompt
             label = "llm answer" if after_tool else "llm decide"
             messages = self._context(system)
@@ -269,8 +301,8 @@ class ChatSession:
                 answer = await self._complete(messages, tools=self.tools)
             except Exception as exc:
                 logger.warning(f"[CHAT] {label} failed: {exc!r}")
-                error = f"{label} failed: {exc}"
-                steps.append({"step": label, "ms": 0, "error": str(exc)[:300]})
+                error = f"{label} failed: {error_text(exc)}"
+                steps.append({"step": label, "ms": 0, "error": error_text(exc)[:300]})
                 break
             prompt_tokens += answer.prompt_tokens
             completion_tokens += answer.completion_tokens
@@ -283,6 +315,8 @@ class ChatSession:
                 "searched": bool(answer.tool_calls),
                 "finish": answer.finish,
             }
+            if answer.retries:
+                step["retries"] = answer.retries
 
             if answer.tool_calls and rounds >= MAX_SEARCH_ROUNDS:
                 logger.info("[CHAT] ignoring a further search in this turn; answering instead")
@@ -431,6 +465,25 @@ class ChatSession:
         return self.topics.apply(messages)
 
     async def _complete(self, messages: list[dict], *, tools: list[dict] | None) -> _Reply:
+        """One chat completion, retried after a timeout, a 429, a 5xx or a connection error."""
+        for attempt in range(self.llm_retries + 1):
+            try:
+                reply = await self._complete_once(messages, tools=tools)
+            except Exception as exc:
+                if attempt == self.llm_retries or not transient_llm_failure(exc):
+                    raise
+                wait = LLM_RETRY_BACKOFF_SECS[min(attempt, len(LLM_RETRY_BACKOFF_SECS) - 1)]
+                logger.warning(
+                    f"[CHAT] llm {error_text(exc)}; retry {attempt + 1}/{self.llm_retries} "
+                    f"in {wait:.0f}s"
+                )
+                await asyncio.sleep(wait)
+                continue
+            reply.retries = attempt
+            return reply
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _complete_once(self, messages: list[dict], *, tools: list[dict] | None) -> _Reply:
         body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -462,6 +515,38 @@ class ChatSession:
             ms=round((time.monotonic() - started) * 1000),
             finish=choice.get("finish_reason"),
         )
+
+
+def transient_llm_failure(exc: BaseException) -> bool:
+    """A failure worth one more try: timeout, connection trouble, 429 or a 5xx."""
+    if isinstance(exc, httpx.TimeoutException | httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
+
+
+def error_text(exc: BaseException) -> str:
+    """What went wrong, in words: an httpx timeout has an empty message, so name it."""
+    if isinstance(exc, httpx.TimeoutException):
+        return f"timed out after {REQUEST_TIMEOUT_SECS:.0f} s"
+    return str(exc) or type(exc).__name__
+
+
+def _forced_search(text: str) -> dict:
+    """A search tool call as the decide step would have written it, with the caller's words."""
+    arguments = {"questions": [text]}
+    return {
+        "id": "forced",
+        "name": TOOL_NAME,
+        "arguments": arguments,
+        "raw": {
+            "id": "forced",
+            "type": "function",
+            "function": {"name": TOOL_NAME, "arguments": json.dumps(arguments, ensure_ascii=False)},
+        },
+    }
 
 
 def _tool_calls(message: dict) -> list[dict]:

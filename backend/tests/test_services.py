@@ -210,3 +210,24 @@ async def test_answer_prompt_is_used_after_a_tool_result(settings):
     )
     assert after_tool["messages"][0]["content"] == "answer prompt"
     assert after_tool["messages"][-1]["role"] == "tool"  # the rest is untouched
+
+
+def test_the_call_llm_re_issues_a_stalled_request(make_settings):
+    service = build_llm(make_settings(llm_stall_retry_secs=4.0), "hi")
+    assert service._retry_on_timeout is True
+    assert service._retry_timeout_secs == 4.0
+
+
+def test_the_stall_retry_can_be_turned_off(make_settings):
+    assert build_llm(make_settings(llm_stall_retry_secs=0), "hi")._retry_on_timeout is False
+
+
+def test_calls_search_the_way_knowledge_search_type_says(make_settings):
+    from voice_agent.services import build_knowledge_service
+
+    base = {"openai_api_key": "sk-test", "database_url": None}
+    assert build_knowledge_service(make_settings(**base)).search_type == "hybrid"
+    semantic = make_settings(**base, knowledge_search_type="semantic")
+    assert build_knowledge_service(semantic).search_type == "semantic"
+    # an explicit choice (evaluation runs) still wins over the setting
+    assert build_knowledge_service(semantic, search_type="keyword").search_type == "keyword"
