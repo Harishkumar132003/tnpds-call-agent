@@ -116,7 +116,9 @@ class Settings(BaseSettings):
     keyword (BM25 only) or hybrid (both, merged by reciprocal rank fusion). Keyword and hybrid
     send every retrieved sheet up to KNOWLEDGE_TOP_K; KNOWLEDGE_MIN_SCORE applies to semantic."""
     filler_clips: bool = True
-    """Play the recorded search filler lines (assets/fillers) instead of synthesising them."""
+    """Play the recorded search filler lines (assets/fillers) instead of synthesising them.
+    The recordings play whatever voice is active; re-record with scripts/filler_audio.py
+    after a voice change."""
     knowledge_rewrite_timeout_secs: float = Field(default=3.0, gt=0)
     knowledge_chunk_chars: int = Field(default=1200, gt=100)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)

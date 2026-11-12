@@ -147,10 +147,11 @@ _loaded: dict[str, FillerClips | None] = {}
 def load_filler_clips(
     language: str, voice: Voice, directory: Path = ASSETS_DIR
 ) -> FillerClips | None:
-    """The clips to play for ``language`` when spoken by ``voice``, else None.
+    """The clips to play for ``language``, or None when none are recorded.
 
-    Read from disk once per process; the voice check runs per session because
-    the portal can change the voice between calls.
+    Read from disk once per process. The recordings are played whatever voice the
+    session speaks with; when the manifest's voice differs from ``voice`` a warning
+    says so, so the owner knows to re-record (scripts/filler_audio.py).
     """
     if language not in _loaded:
         try:
@@ -164,11 +165,10 @@ def load_filler_clips(
         return None
     if not clips.matches(voice):
         logger.warning(
-            f"Filler clips: recorded with {clips.voice.model}/{clips.voice.speaker} but the "
-            f"agent speaks with {voice.model}/{voice.speaker}; filler lines go through TTS "
-            "(re-run scripts/filler_audio.py)"
+            f"Filler clips: recorded with {clips.voice.model}/{clips.voice.speaker} at pace "
+            f"{clips.voice.pace} but the agent speaks with {voice.model}/{voice.speaker} at pace "
+            f"{voice.pace}; playing them anyway (re-run scripts/filler_audio.py to match)"
         )
-        return None
     logger.info(
         f"Filler clips: {len(clips)} recorded lines ({voice.model}/{voice.speaker}) for {language}"
     )

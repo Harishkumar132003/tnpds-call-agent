@@ -81,17 +81,18 @@ async def test_telephony_rate_is_resampled_once_and_reused(clip_dir):
     assert set(clips._at_rate) == {8000}  # 24 kHz never needed, never converted
 
 
-def test_load_filler_clips_falls_back_when_the_voice_changed(clip_dir, monkeypatch):
+def test_load_filler_clips_plays_whatever_the_voice_and_warns_on_a_mismatch(clip_dir, monkeypatch):
     import voice_agent.fillers as fillers
 
     monkeypatch.setattr(fillers, "_loaded", {})
     assert load_filler_clips("ta-IN", VOICE, clip_dir) is not None
-    assert load_filler_clips("ta-IN", Voice("bulbul:v3", "ishita", 1.0, None), clip_dir) is None
-    assert load_filler_clips("hi-IN", VOICE, clip_dir) is None
+    other = Voice("bulbul:v3", "ishita", 1.0, None)
+    assert load_filler_clips("ta-IN", other, clip_dir) is not None  # played, mismatch logged
+    assert load_filler_clips("hi-IN", VOICE, clip_dir) is None  # nothing recorded
 
 
 def test_recorded_assets_cover_every_tamil_line():
     clips = FillerClips.load("ta-IN", ASSETS_DIR)
     assert clips is not None
     assert set(clips.texts) == set(SEARCHING_LINES["ta-IN"])
-    assert clips.matches(VOICE)  # the voice the agent is configured with today
+    assert clips.voice.model and clips.voice.speaker  # the manifest says which voice

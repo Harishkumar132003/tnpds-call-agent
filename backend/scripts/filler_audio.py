@@ -9,6 +9,7 @@ clips still match the configured voice. Run from ``backend/``:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import json
@@ -34,6 +35,11 @@ OUT_DIR = Path(__file__).resolve().parent.parent / "voice_agent" / "assets" / "f
 
 
 async def main() -> None:
+    ap = argparse.ArgumentParser(description="Record the search filler lines with a voice.")
+    ap.add_argument("--model", help="TTS model; default: the active configuration's")
+    ap.add_argument("--speaker", help="speaker id; default: the active configuration's")
+    ap.add_argument("--pace", type=float, help="speech pace; default: SARVAM_TTS_PACE")
+    args = ap.parse_args()
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     settings = Settings()
     pool = await create_pool(os.environ["DATABASE_URL"])
@@ -43,9 +49,9 @@ async def main() -> None:
         await pool.close()
 
     language = config.language or settings.agent_language
-    model = config.tts_model or settings.sarvam_tts_model
-    speaker = config.tts_speaker or settings.sarvam_tts_speaker
-    pace = settings.sarvam_tts_pace
+    model = args.model or config.tts_model or settings.sarvam_tts_model
+    speaker = args.speaker or config.tts_speaker or settings.sarvam_tts_speaker
+    pace = args.pace or settings.sarvam_tts_pace
     dict_id = config.tts_dict_id
     lines = SEARCHING_LINES.get(language, SEARCHING_LINES["en-IN"])
     if isinstance(lines, str):
