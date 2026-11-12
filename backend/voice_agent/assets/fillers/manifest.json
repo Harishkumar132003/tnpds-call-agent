@@ -2,30 +2,30 @@
   "language": "ta-IN",
   "model": "bulbul:v4-flash",
   "speaker": "aravind_ta_ads",
-  "pace": 1.0,
+  "pace": 1.2,
   "dict_id": null,
   "sample_rate": 24000,
-  "generated_at": "2026-10-29T09:06:36+00:00",
+  "generated_at": "2026-11-12T11:05:16+00:00",
   "clips": [
     {
       "file": "ta-IN-1.wav",
       "text": "சரி, இருங்க… பாத்துச் சொல்றேன்.",
-      "seconds": 1.84
+      "seconds": 1.51
     },
     {
       "file": "ta-IN-2.wav",
       "text": "சரி, ஒரு தடவை செக் பண்ணிப் பாத்துட்டுச் சொல்றேன்.",
-      "seconds": 2.48
+      "seconds": 1.87
     },
     {
       "file": "ta-IN-3.wav",
       "text": "சரிங்க, இதோ பாத்துட்டு இருக்கேன்.",
-      "seconds": 1.6
+      "seconds": 1.53
     },
     {
       "file": "ta-IN-4.wav",
       "text": "umm.. சரி, பாத்துட்டு சொல்றேன்.",
-      "seconds": 2.32
+      "seconds": 2.2
     }
   ]
 }

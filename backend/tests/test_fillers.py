@@ -9,7 +9,7 @@ from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame, TTSStoppedF
 from voice_agent.fillers import ASSETS_DIR, FillerClips, Voice, load_filler_clips
 from voice_agent.knowledge.tool import SEARCHING_LINES
 
-VOICE = Voice(model="bulbul:v4-flash", speaker="aravind_ta_ads", pace=1.0, dict_id=None)
+VOICE = Voice(model="bulbul:v4-flash", speaker="aravind_ta_ads", pace=1.2, dict_id=None)
 
 
 def _tone(path, *, seconds: float, rate: int = 24000) -> None:
@@ -31,8 +31,8 @@ def clip_dir(tmp_path):
         "language": "ta-IN",
         "model": VOICE.model,
         "speaker": VOICE.speaker,
-        "pace": 1.0,
-        "dict_id": None,
+        "pace": VOICE.pace,
+        "dict_id": VOICE.dict_id,
         "sample_rate": 24000,
         "clips": [{"file": "a.wav", "text": "line a"}, {"file": "b.wav", "text": "line b"}],
     }
@@ -52,9 +52,9 @@ def test_load_reads_manifest_and_wavs(clip_dir):
 def test_voice_must_match_the_manifest(clip_dir):
     clips = FillerClips.load("ta-IN", clip_dir)
     assert clips.matches(VOICE)
-    assert not clips.matches(Voice("bulbul:v4-flash", "ishita", 1.0, None))
-    assert not clips.matches(Voice("bulbul:v4-flash", "aravind_ta_ads", 1.2, None))
-    assert not clips.matches(Voice("bulbul:v4-flash", "aravind_ta_ads", 1.0, "dict-1"))
+    assert not clips.matches(Voice(VOICE.model, "ishita", VOICE.pace, None))  # other speaker
+    assert not clips.matches(Voice(VOICE.model, VOICE.speaker, 1.0, None))  # other pace
+    assert not clips.matches(Voice(VOICE.model, VOICE.speaker, VOICE.pace, "dict-1"))  # other dict
 
 
 async def test_frames_look_like_one_tts_utterance(clip_dir):
