@@ -356,3 +356,74 @@ export interface EvalResult {
   ms: number | null;
   at: string;
 }
+
+export interface AnswerMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+export interface AnswerSheet {
+  source: string;
+  document_id?: string;
+  chunk_index?: number;
+  score: number;
+  used: boolean;
+  text: string;
+}
+export interface AnswerItem {
+  id: number;
+  kind: 'single' | 'follow_up';
+  messages: AnswerMessage[];
+  question_en: string | null;
+  expected_source: string | null;
+  sheets: AnswerSheet[];
+  rewritten_query: string | null;
+  source_call_id: string | null;
+  source_question_id: number | null;
+  note: string | null;
+  /** The named set the item belongs to ("main" by default). */
+  dataset: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface AnswerDataset {
+  dataset: string;
+  items: number;
+}
+export interface AnswerRun {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  prompt: string;
+  prompt_source: 'draft' | 'config' | 'default';
+  config_id: number | null;
+  model: string | null;
+  total: number;
+  error: string | null;
+  /** Only the first N sent sheets were given to the model; null = all. */
+  max_sheets: number | null;
+  /** Only sent sheets scoring at least this were given (the best always was); null = all. */
+  min_score: number | null;
+  dataset: string;
+  results: number;
+  answered: number;
+  errors: number;
+  /** Answers the reviewer marked, and how many of those were marked correct. */
+  judged: number;
+  judged_ok: number;
+  avg_ms: number;
+}
+export interface AnswerResult {
+  id: number;
+  run_id: string;
+  item_id: number | null;
+  answer: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  ms: number | null;
+  error: string | null;
+  judged: boolean;
+  judged_ok: boolean;
+  judge_note: string | null;
+  at: string;
+}

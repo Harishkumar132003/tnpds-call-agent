@@ -65,6 +65,10 @@ export function Sidebar({ liveCalls, backendUp, language }: Props) {
           <Icon name="refresh" className="nav__icon" />
           <span className="nav__label">Rewrite prompt</span>
         </NavLink>
+        <NavLink to="/answer-eval" className={navClass}>
+          <Icon name="chat" className="nav__icon" />
+          <span className="nav__label">Answer prompt</span>
+        </NavLink>
         <NavLink to="/pronunciation" className={navClass}>
           <Icon name="sparkle" className="nav__icon" />
           <span className="nav__label">Pronunciation</span>

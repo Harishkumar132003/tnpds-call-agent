@@ -211,6 +211,10 @@ SUMMARY_SQL = """
 """
 
 
+JSON_COLUMNS = ("hits", "messages", "sheets")
+"""jsonb columns asyncpg hands back as text."""
+
+
 def _json(record: asyncpg.Record | None) -> dict | None:
     if record is None:
         return None
@@ -220,8 +224,9 @@ def _json(record: asyncpg.Record | None) -> dict | None:
             row[key] = value.isoformat()
         elif isinstance(value, uuid.UUID):
             row[key] = str(value)
-    if isinstance(row.get("hits"), str):
-        row["hits"] = json.loads(row["hits"])
+    for key in JSON_COLUMNS:
+        if isinstance(row.get(key), str):
+            row[key] = json.loads(row[key])
     return row
 
 

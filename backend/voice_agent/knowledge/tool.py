@@ -166,13 +166,22 @@ class KnowledgeTool:
         return str(getattr(self.service, "search_type", "semantic"))
 
     def _selected(self, hits: list[Any]) -> list[Any]:
-        """The hits to send: only those at or above ``min_score``. A near-miss sheet is never
-        sent: answering from the closest wrong sheet is how the agent hallucinated.
+        """The hits to send: only those at or above ``min_score``.
 
-        Keyword and hybrid search (evaluation only) score on other scales (BM25, RRF), so
-        there every retrieved sheet is sent, up to ``limit``."""
-        if self.search_type != "semantic":
+        Semantic: a near-miss sheet is never sent (answering from the closest wrong sheet is
+        how the agent hallucinated), so below the floor nothing goes and the agent says it has
+        no information.
+
+        Hybrid: the score is a reciprocal-rank-fusion score, a rank measure rather than a
+        similarity, so the floor trims the tail (a sheet far down both lists) but the best
+        sheet is always sent; RRF cannot tell "nothing relevant" apart from a clear answer.
+
+        Keyword (evaluation only) scores on the BM25 scale, so every retrieved sheet is sent."""
+        if self.search_type == "keyword":
             return list(hits)
+        if self.search_type == "hybrid":
+            kept = [h for h in hits if h.score >= self.min_score]
+            return kept or list(hits[:1])
         return [h for h in hits if h.score >= max(self.min_score, MIN_SCORE)]
 
     def on_search(self, listener: SearchListener) -> None:

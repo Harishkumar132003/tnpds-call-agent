@@ -15,6 +15,7 @@ import { KnowledgePage } from './pages/KnowledgePage';
 import { ModelsPage } from './pages/ModelsPage';
 import { PronunciationPage } from './pages/PronunciationPage';
 import { RewriteEvalPage } from './pages/RewriteEvalPage';
+import { AnswerEvalPage } from './pages/AnswerEvalPage';
 import { TestCallPage } from './pages/TestCallPage';
 import type { AgentConfig } from './types';
 
@@ -66,6 +67,7 @@ function Shell() {
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/pronunciation" element={<PronunciationPage />} />
           <Route path="/rewrite-eval" element={<RewriteEvalPage />} />
+          <Route path="/answer-eval" element={<AnswerEvalPage />} />
           <Route path="/test-call" element={<TestCallPage />} />
         </Routes>
       </div>

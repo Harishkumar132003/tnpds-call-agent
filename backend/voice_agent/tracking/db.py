@@ -156,6 +156,50 @@ create table if not exists rewrite_eval_results (
     at              timestamptz not null default now()
 );
 alter table rewrite_eval_results add column if not exists judged_ok boolean not null default false;
+create table if not exists answer_eval_items (
+    id                 bigserial primary key,
+    kind               text not null default 'single',
+    messages           jsonb not null default '[]',
+    question_en        text,
+    expected_source    text,
+    sheets             jsonb not null default '[]',
+    rewritten_query    text,
+    source_call_id     uuid,
+    source_question_id bigint,
+    note               text,
+    created_at         timestamptz not null default now(),
+    updated_at         timestamptz not null default now()
+);
+create table if not exists answer_eval_runs (
+    id            uuid primary key,
+    started_at    timestamptz not null default now(),
+    finished_at   timestamptz,
+    status        text not null,
+    prompt        text not null,
+    prompt_source text not null default 'config',
+    config_id     integer,
+    model         text,
+    total         integer not null default 0,
+    error         text
+);
+create table if not exists answer_eval_results (
+    id                bigserial primary key,
+    run_id            uuid not null references answer_eval_runs(id) on delete cascade,
+    item_id           bigint references answer_eval_items(id) on delete set null,
+    answer            text,
+    prompt_tokens     integer not null default 0,
+    completion_tokens integer not null default 0,
+    ms                integer,
+    error             text,
+    judged            boolean not null default false,
+    judged_ok         boolean not null default false,
+    judge_note        text,
+    at                timestamptz not null default now()
+);
+alter table answer_eval_runs add column if not exists max_sheets integer;
+alter table answer_eval_runs add column if not exists min_score real;
+alter table answer_eval_items add column if not exists dataset text not null default 'main';
+alter table answer_eval_runs add column if not exists dataset text not null default 'main';
 create table if not exists eval_results (
     id                bigserial primary key,
     batch_id          uuid not null references eval_batches(id) on delete cascade,

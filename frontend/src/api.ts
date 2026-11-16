@@ -1,4 +1,5 @@
 import type {
+  AnswerDataset, AnswerItem, AnswerMessage, AnswerResult, AnswerRun,
   EvalBatch,
   EvalQuestion,
   EvalResult,
@@ -20,7 +21,7 @@ import type {
 } from './types';
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  const res = await fetch(path, { cache: 'no-store' }); // API reads are live data, never from the browser cache
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
@@ -137,4 +138,21 @@ export const api = {
   rewriteJudge: (runId: string, resultId: number, ok: boolean) =>
     send<{ run: RewriteRun }>(`/api/rewrite-evals/runs/${runId}/results/${resultId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok }) }),
   rewriteDeleteRun: (id: string) => send<{ deleted: boolean }>(`/api/rewrite-evals/runs/${id}`, { method: 'DELETE' }),
+  answerDatasets: () => get<{ datasets: AnswerDataset[] }>('/api/answer-evals/datasets'),
+  answerItems: (dataset: string) => get<{ items: AnswerItem[] }>(`/api/answer-evals/items?dataset=${encodeURIComponent(dataset)}`),
+  answerGenerate: (singles: number, followUps: number, dataset: string) =>
+    send<{ added: { single: number; follow_up: number }; items: AnswerItem[] }>('/api/answer-evals/items/generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ singles, follow_ups: followUps, dataset }) }),
+  answerAddItem: (item: { messages: AnswerMessage[]; question_en: string | null; expected_source: string | null; note: string | null; dataset: string }) =>
+    send<AnswerItem>('/api/answer-evals/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(item) }),
+  answerUpdateItem: (id: number, item: { messages: AnswerMessage[]; question_en: string | null; expected_source: string | null; note: string | null; dataset: string }) =>
+    send<AnswerItem>(`/api/answer-evals/items/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(item) }),
+  answerRefreshItem: (id: number) => send<AnswerItem>(`/api/answer-evals/items/${id}/refresh`, { method: 'POST' }),
+  answerDeleteItem: (id: number) => send<{ deleted: boolean }>(`/api/answer-evals/items/${id}`, { method: 'DELETE' }),
+  answerRuns: () => get<{ runs: AnswerRun[]; running: boolean }>('/api/answer-evals/runs'),
+  answerRun: (id: string) => get<{ run: AnswerRun; results: AnswerResult[] }>(`/api/answer-evals/runs/${id}`),
+  answerRunStart: (prompt: string | null, maxSheets: number | null, minScore: number | null, dataset: string) =>
+    send<{ run: AnswerRun; results: AnswerResult[] }>('/api/answer-evals/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, max_sheets: maxSheets, min_score: minScore, dataset }) }),
+  answerJudge: (runId: string, resultId: number, ok: boolean | null, note: string | null) =>
+    send<{ run: AnswerRun }>(`/api/answer-evals/runs/${runId}/results/${resultId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok, note }) }),
+  answerDeleteRun: (id: string) => send<{ deleted: boolean }>(`/api/answer-evals/runs/${id}`, { method: 'DELETE' }),
 };

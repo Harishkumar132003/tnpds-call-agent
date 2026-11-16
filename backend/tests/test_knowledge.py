@@ -405,6 +405,28 @@ def test_selection_sends_everything_above_the_threshold_capped_with_a_fallback()
     assert tool._selected(hits(0.20)) == []
 
 
+def test_hybrid_selection_trims_below_the_floor_but_always_sends_the_best_sheet():
+    from types import SimpleNamespace
+
+    from voice_agent.knowledge.store import Hit
+    from voice_agent.knowledge.tool import KnowledgeTool
+
+    def hits(*scores):
+        return [Hit(s, "t", f"d{i}", f"doc{i}", 0) for i, s in enumerate(scores)]
+
+    def tool(search_type):
+        service = SimpleNamespace(search_type=search_type)
+        return KnowledgeTool(service=service, min_score=0.40)  # type: ignore[arg-type]
+
+    # RRF scores: 1.0 and 0.5 pass, 0.333 and 0.25 are dropped
+    assert [h.score for h in tool("hybrid")._selected(hits(1.0, 0.5, 0.333, 0.25))] == [1.0, 0.5]
+    # nothing reaches the floor: RRF cannot say "nothing relevant", so the best sheet still goes
+    assert [h.score for h in tool("hybrid")._selected(hits(0.333, 0.25))] == [0.333]
+    assert tool("hybrid")._selected([]) == []
+    # keyword (evaluation only): BM25 scale, everything retrieved is sent
+    assert len(tool("keyword")._selected(hits(9.1, 0.3))) == 2
+
+
 # ---------- query rewrite (KNOWLEDGE_QUERY_REWRITE) ----------
 
 

@@ -108,13 +108,15 @@ class Settings(BaseSettings):
     knowledge_top_k: int = Field(default=5, ge=1, le=10)
     """Most sheets one question's search hands to the LLM."""
     knowledge_min_score: float = Field(default=0.40, ge=0, le=1)
-    """Send every sheet whose similarity reaches this score; below it nothing is sent."""
+    """Send every sheet whose score reaches this value. Semantic: below it nothing is sent.
+    Hybrid: below it the sheet is dropped, but the best sheet is always sent."""
     knowledge_query_rewrite: bool = False
     """Rewrite each knowledge question + recent conversation into an English query first."""
     knowledge_search_type: Literal["semantic", "keyword", "hybrid"] = "hybrid"
     """How calls, test calls and the chat search the sheets: semantic (embeddings only),
-    keyword (BM25 only) or hybrid (both, merged by reciprocal rank fusion). Keyword and hybrid
-    send every retrieved sheet up to KNOWLEDGE_TOP_K; KNOWLEDGE_MIN_SCORE applies to semantic."""
+    keyword (BM25 only) or hybrid (both, merged by reciprocal rank fusion). Up to
+    KNOWLEDGE_TOP_K sheets are fetched; KNOWLEDGE_MIN_SCORE then trims them (see there).
+    Keyword sends every retrieved sheet."""
     filler_clips: bool = True
     """Play the recorded search filler lines (assets/fillers) instead of synthesising them.
     The recordings play whatever voice is active; re-record with scripts/filler_audio.py

@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from chat_agent.routes import create_chat_router
+from portal.answer_evals import create_answer_evals_router
 from portal.evals import create_evals_router
 from portal.rewrite_evals import create_rewrite_evals_router
 from voice_agent import models as catalogue
@@ -566,6 +567,7 @@ def create_app(
     app.include_router(create_evals_router(knowledge))
     # Rewrite-prompt evaluation: a fixed question set rewritten with a draft prompt
     app.include_router(create_rewrite_evals_router(knowledge))
+    app.include_router(create_answer_evals_router(knowledge))
     _mount_frontend(app)
     return app
 
@@ -690,10 +692,14 @@ def _mount_frontend(app: FastAPI) -> None:
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str):
+        if path == "api" or path.startswith("api/"):
+            # never answer an unknown API route with the page: browsers cache that HTML
+            # (Last-Modified, no Cache-Control) and keep serving it to fetch() afterwards
+            raise HTTPException(404, f"no such API route: /{path}")
         candidate = FRONTEND_DIST / path
         if path and candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-store"})
 
 
 def parse_config(
